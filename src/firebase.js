@@ -1,14 +1,10 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
-import { getFirestore } from "firebase/firestore"; // <-- ADD THIS LINE
-
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
+import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth"; // <-- ADD THIS
 
 // Your web app's Firebase configuration
-// This is now secure and pulls variables from Vercel (in production)
-// or your local .env file (in development)
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_API_KEY,
   authDomain: import.meta.env.VITE_AUTH_DOMAIN,
@@ -23,6 +19,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 
-// Initialize Cloud Firestore and export it
-export const db = getFirestore(app); // <-- ADD THIS LINE
+// Initialize Services
+export const db = getFirestore(app);
+export const auth = getAuth(app); // <-- EXPORT THIS
 export default app;
