@@ -1,19 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { db, auth } from '../firebase.js'; // Relative path to src/firebase.js
+import { db, auth } from '../firebase.js'; 
 import { collection, addDoc, doc, getDoc, getDocs, query, where, updateDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { Link, useNavigate } from 'react-router-dom';
-
-// --- DATA: LAWN CARE PROS ---
-const PROS = [
-  {
-    id: 'joshua-russelburg',
-    name: 'Joshua Russelburg',
-    area: 'Morganfield, KY',
-    rating: 4.9,
-    image: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Joshua', 
-  }
-];
 
 // --- DATA: SERVICE LIST ---
 const SERVICES = [
@@ -47,6 +36,8 @@ const SERVICES = [
   { category: "Additional", id: "haul_off", title: "Junk / Brush Haul-Off", price: "$50 / load", desc: "Branches, brush, yard debris per pickup load." },
 ];
 
+const DAYS_MAP = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 /**
  * =================================================================
  * BLOCK 1: CustomerDashboard (Home)
@@ -70,44 +61,117 @@ function DashboardHome({ user }) {
     });
   }, [user]);
 
+  const handleAcceptQuote = async (bookingId) => {
+    if(!window.confirm("Accept this quote and schedule the service?")) return;
+    try {
+      await updateDoc(doc(db, "bookings", bookingId), { status: 'confirmed' });
+      alert("Quote accepted! Service is now scheduled.");
+      window.location.reload(); 
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   if (loading) return <p className="text-center p-4">Loading your services...</p>;
 
+  const requests = bookings.filter(b => ['pending', 'quote_received'].includes(b.status));
+  const upcoming = bookings.filter(b => ['confirmed', 'scheduled', 'completed'].includes(b.status));
+
   return (
-    <div className="max-w-4xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6 text-gray-800">Your Services</h2>
-      {bookings.length === 0 ? (
-        <div className="bg-white p-8 rounded-lg shadow-sm border text-center">
-          <p className="text-gray-500 mb-4">You haven't booked any services yet.</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {bookings.map(booking => (
-            <div key={booking.id} className="bg-white p-6 rounded-lg shadow-sm border border-gray-100 flex justify-between items-center">
-              <div>
-                <h3 className="font-bold text-lg text-gray-800">{booking.service}</h3>
-                <p className="text-gray-600">
-                  {new Date(booking.requestedDate.seconds * 1000).toLocaleDateString()} at {booking.requestedTimeSlot || 'TBD'}
-                </p>
-                <p className="text-sm text-gray-500">Pro: {booking.proName}</p>
-                {booking.frequency && booking.frequency !== 'One-time' && (
-                  <span className="inline-block mt-2 text-xs font-semibold bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                    Repeat: {booking.frequency}
+    <div className="max-w-4xl mx-auto space-y-8">
+      
+      {/* SECTION 1: ACTIVE REQUESTS */}
+      <div>
+        <h2 className="text-2xl font-bold mb-4 text-gray-800">Active Requests</h2>
+        {requests.length === 0 ? (
+          <p className="text-gray-500 italic">No pending requests.</p>
+        ) : (
+          <div className="space-y-4">
+            {requests.map(booking => (
+              <div key={booking.id} className="bg-white p-6 rounded-lg shadow-sm border border-blue-100">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="font-bold text-lg text-gray-800">{booking.service}</h3>
+                    <p className="text-sm text-gray-500">Requested for: {new Date(booking.requestedDate.seconds * 1000).toLocaleDateString()}</p>
+                    <p className="text-sm text-gray-500">Pro: {booking.proName}</p>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 uppercase tracking-wide">
+                    {booking.status.replace('_', ' ')}
                   </span>
+                </div>
+
+                {/* SHOW QUOTE IF AVAILABLE */}
+                {booking.status === 'quote_received' && (
+                  <div className="mt-4 bg-yellow-50 p-4 rounded-lg border border-yellow-100">
+                    <p className="text-sm font-bold text-yellow-800 uppercase mb-2">Quote Received</p>
+                    <div className="flex justify-between items-center mb-4">
+                      <span className="text-gray-700">Estimated Cost:</span>
+                      <span className="text-2xl font-bold text-green-700">${booking.quoteAmount}</span>
+                    </div>
+                    {booking.proNotes && (
+                       <p className="text-sm text-gray-600 mb-4 italic">" {booking.proNotes} "</p>
+                    )}
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={() => handleAcceptQuote(booking.id)}
+                        className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors"
+                      >
+                        Accept & Schedule
+                      </button>
+                      <button className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        Decline
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
-              <div className="text-right">
-                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                  booking.status === 'confirmed' ? 'bg-green-100 text-green-800' :
-                  booking.status === 'denied' ? 'bg-red-100 text-red-800' :
-                  'bg-yellow-100 text-yellow-800'
-                }`}>
-                  {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
-                </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 2: UPCOMING SERVICES */}
+      <div>
+        <h2 className="text-2xl font-bold mb-4 text-gray-800">Upcoming Services</h2>
+        {upcoming.length === 0 ? (
+          <div className="bg-gray-50 p-8 rounded-lg border border-dashed text-center">
+            <p className="text-gray-500">No confirmed services coming up.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {upcoming.map(booking => (
+              <div key={booking.id} className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-green-500">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="font-bold text-lg text-gray-800">{booking.service}</h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                      <span className="text-gray-700 font-medium">
+                        {booking.scheduledDate ? new Date(booking.scheduledDate.seconds * 1000).toLocaleDateString() : new Date(booking.requestedDate.seconds * 1000).toLocaleDateString()}
+                      </span>
+                      <span className="text-gray-400">|</span>
+                      <span className="text-gray-600">{booking.requestedTimeSlot || 'Time TBD'}</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                     {booking.status === 'completed' ? (
+                        <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase">Completed</span>
+                     ) : (
+                        <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold uppercase">Confirmed</span>
+                     )}
+                  </div>
+                </div>
+                {booking.frequency !== 'One-time' && (
+                   <div className="mt-3 inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-700 text-xs font-medium">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                      {booking.frequency}
+                   </div>
+                )}
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -115,7 +179,6 @@ function DashboardHome({ user }) {
 /**
  * =================================================================
  * BLOCK 2: CustomerProfile
- * Edit contact details.
  * =================================================================
  */
 function CustomerProfile({ user, profile, setProfile }) {
@@ -188,17 +251,12 @@ function CustomerProfile({ user, profile, setProfile }) {
 /**
  * =================================================================
  * BLOCK 3: CustomerPreferences
- * Edit lawn care specifics.
  * =================================================================
  */
 function CustomerPreferences({ user, profile, setProfile }) {
   const [isSaving, setIsSaving] = useState(false);
   const [prefs, setPrefs] = useState(profile?.preferences || {
-    mowHeight: 'Medium',
-    pattern: 'No Preference',
-    pets: 'No',
-    gateCode: '',
-    avoidAreas: ''
+    mowHeight: 'Medium', pattern: 'No Preference', pets: 'No', gateCode: '', avoidAreas: '', notifications: { email: true, sms: false }
   });
 
   const handleSave = async (e) => {
@@ -215,57 +273,23 @@ function CustomerPreferences({ user, profile, setProfile }) {
     }
   };
 
+  const handleNotifChange = (type) => {
+    setPrefs(prev => ({
+      ...prev, notifications: { ...prev.notifications, [type]: !prev.notifications?.[type] }
+    }));
+  };
+
   return (
     <div className="max-w-2xl mx-auto bg-white p-8 rounded-xl shadow-sm border border-gray-100">
       <h2 className="text-2xl font-bold mb-6 text-gray-800">Lawn Preferences</h2>
       <form onSubmit={handleSave} className="space-y-6">
-        
-        {/* Mow Height */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Preferred Mow Height</label>
-          <div className="flex gap-4">
-            {['Low', 'Medium', 'High'].map(opt => (
-              <button key={opt} type="button" 
-                onClick={() => setPrefs({...prefs, mowHeight: opt})}
-                className={`flex-1 py-2 rounded-lg border ${prefs.mowHeight === opt ? 'bg-green-100 border-green-500 text-green-800' : 'border-gray-300 text-gray-600'}`}
-              >
-                {opt}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Pattern */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Mowing Pattern</label>
-          <select value={prefs.pattern} onChange={e => setPrefs({...prefs, pattern: e.target.value})}
-            className="block w-full rounded-md border-gray-300 border p-3">
-            <option>No Preference</option>
-            <option>Stripes</option>
-            <option>Checkers</option>
-            <option>Diagonal</option>
-          </select>
-        </div>
-
-        {/* Gate Code */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Gate Code / Access Instructions</label>
-          <input type="text" className="mt-1 block w-full rounded-md border-gray-300 border p-3" 
-            value={prefs.gateCode} onChange={e => setPrefs({...prefs, gateCode: e.target.value})} 
-            placeholder="e.g. 1234 or Side Gate is unlocked" />
-        </div>
-
-        {/* Avoid Areas */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Areas to Avoid</label>
-          <textarea rows={3} className="mt-1 block w-full rounded-md border-gray-300 border p-3"
-            value={prefs.avoidAreas} onChange={e => setPrefs({...prefs, avoidAreas: e.target.value})}
-            placeholder="e.g. Please avoid the flower bed near the porch." />
-        </div>
-
-        <button type="submit" disabled={isSaving} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
-          {isSaving ? 'Saving...' : 'Save Preferences'}
-        </button>
+        {/* ... (Inputs omitted for brevity, logic is same as before) ... */}
+        <div><label className="block text-sm font-medium text-gray-700 mb-2">Preferred Mow Height</label><div className="flex gap-4">{['Low', 'Medium', 'High'].map(opt => (<button key={opt} type="button" onClick={() => setPrefs({...prefs, mowHeight: opt})} className={`flex-1 py-2 rounded-lg border ${prefs.mowHeight === opt ? 'bg-green-100 border-green-500 text-green-800' : 'border-gray-300 text-gray-600'}`}>{opt}</button>))}</div></div>
+        <div><label className="block text-sm font-medium text-gray-700 mb-2">Mowing Pattern</label><select value={prefs.pattern} onChange={e => setPrefs({...prefs, pattern: e.target.value})} className="block w-full rounded-md border-gray-300 border p-3"><option>No Preference</option><option>Stripes</option><option>Checkers</option><option>Diagonal</option></select></div>
+        <div><label className="block text-sm font-medium text-gray-700">Gate Code / Access Instructions</label><input type="text" className="mt-1 block w-full rounded-md border-gray-300 border p-3" value={prefs.gateCode} onChange={e => setPrefs({...prefs, gateCode: e.target.value})} placeholder="e.g. 1234 or Side Gate is unlocked" /></div>
+        <div><label className="block text-sm font-medium text-gray-700">Areas to Avoid</label><textarea rows={3} className="mt-1 block w-full rounded-md border-gray-300 border p-3" value={prefs.avoidAreas} onChange={e => setPrefs({...prefs, avoidAreas: e.target.value})} placeholder="e.g. Please avoid the flower bed near the porch." /></div>
+        <div className="pt-4 border-t border-gray-100"><h3 className="text-lg font-semibold mb-3 text-gray-800">Notification Settings</h3><div className="flex flex-col gap-3"><label className="flex items-center space-x-3 cursor-pointer"><input type="checkbox" checked={prefs.notifications?.email ?? true} onChange={() => handleNotifChange('email')} className="h-5 w-5 text-green-600 rounded focus:ring-green-500 border-gray-300" /><span className="text-gray-700">Email Reminders</span></label><label className="flex items-center space-x-3 cursor-pointer"><input type="checkbox" checked={prefs.notifications?.sms ?? false} onChange={() => handleNotifChange('sms')} className="h-5 w-5 text-green-600 rounded focus:ring-green-500 border-gray-300" /><span className="text-gray-700">Text Message Reminders</span></label></div></div>
+        <button type="submit" disabled={isSaving} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">{isSaving ? 'Saving...' : 'Save Preferences'}</button>
       </form>
     </div>
   );
@@ -274,38 +298,32 @@ function CustomerPreferences({ user, profile, setProfile }) {
 /**
  * =================================================================
  * BLOCK 4: BookingWizard (Refactored)
+ * Includes Dynamic Pro Fetching, Photo Upload, and 1-Col Layout
  * =================================================================
  */
 function BookingWizard({ user, profile, onCancel }) {
   const [step, setStep] = useState(1); 
   const [selectedPro, setSelectedPro] = useState(null);
-  
-  // --- NEW: DYNAMIC PRO FETCHING ---
   const [pros, setPros] = useState([]);
   const [loadingPros, setLoadingPros] = useState(true);
 
+  // --- DYNAMIC PRO FETCHING ---
   useEffect(() => {
     const fetchPros = async () => {
-      // Find all users where role == 'admin' (This is what you asked for!)
       const q = query(collection(db, "users"), where("role", "==", "admin"));
       const snapshot = await getDocs(q);
       const list = [];
       snapshot.forEach(doc => {
         const data = doc.data();
-        
-        // Privacy Fix: Prefer City/State over full address
         let displayArea = "Service Area";
-        if (data.city && data.state) {
-            displayArea = `${data.city}, ${data.state}`;
-        } else if (data.businessAddress) {
-             displayArea = "Service Area"; 
-        }
+        if (data.city && data.state) displayArea = `${data.city}, ${data.state}`;
+        else if (data.businessAddress) displayArea = "Service Area"; 
 
         list.push({
           id: data.uid,
-          name: data.businessName || data.fullName, // Use business name if available
-          area: displayArea, // Updated to use City, State or fallback
-          rating: 5.0, // Default rating for now
+          name: data.businessName || data.fullName,
+          area: displayArea,
+          rating: 5.0,
           image: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.uid}`
         });
       });
@@ -317,13 +335,8 @@ function BookingWizard({ user, profile, onCancel }) {
 
   const [useProfileAddress, setUseProfileAddress] = useState(true);
   const [customerInfo, setCustomerInfo] = useState({ 
-    name: profile?.fullName || '', 
-    address: profile?.address || '', 
-    city: profile?.city || '', 
-    state: profile?.state || '', 
-    zip: profile?.zip || '', 
-    email: user?.email || '', 
-    phone: profile?.phone || '' 
+    name: profile?.fullName || '', address: profile?.address || '', city: profile?.city || '', 
+    state: profile?.state || '', zip: profile?.zip || '', email: user?.email || '', phone: profile?.phone || '' 
   });
   const [selectedService, setSelectedService] = useState(null);
   
@@ -332,17 +345,14 @@ function BookingWizard({ user, profile, onCancel }) {
   const [frequency, setFrequency] = useState('One-time');
   const [availableSlots, setAvailableSlots] = useState([]); 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [photos, setPhotos] = useState([]); 
 
   useEffect(() => {
     if (useProfileAddress && profile) {
       setCustomerInfo(prev => ({
         ...prev,
-        name: profile.fullName || '',
-        address: profile.address || '',
-        city: profile.city || '',
-        state: profile.state || '',
-        zip: profile.zip || '',
-        phone: profile.phone || ''
+        name: profile.fullName || '', address: profile.address || '', city: profile.city || '', 
+        state: profile.state || '', zip: profile.zip || '', phone: profile.phone || '' 
       }));
     }
   }, [useProfileAddress, profile]);
@@ -350,6 +360,24 @@ function BookingWizard({ user, profile, onCancel }) {
   const handleDateChange = (e) => {
     setSelectedDate(e.target.value);
     setAvailableSlots(["09:00 AM", "10:00 AM", "11:00 AM", "01:00 PM", "02:00 PM"]); 
+  };
+
+  // --- PHOTO CONVERSION ---
+  const handleFileChange = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+       const files = Array.from(e.target.files);
+       if (files.length > 4) { alert("Maximum 4 photos allowed."); return; }
+       const promises = files.map(file => {
+          return new Promise((resolve, reject) => {
+              if (file.size > 500000) { alert(`File ${file.name} too large. Max 500KB.`); reject("Too large"); return; }
+              const reader = new FileReader();
+              reader.readAsDataURL(file);
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = error => reject(error);
+          });
+       });
+       Promise.all(promises).then(base64Images => setPhotos(base64Images));
+    }
   };
 
   const handleSubmitRequest = async () => {
@@ -365,7 +393,8 @@ function BookingWizard({ user, profile, onCancel }) {
         service: selectedService.title,
         requestedDate: new Date(selectedDate),
         requestedTimeSlot: selectedTimeSlot,
-        frequency: frequency, 
+        frequency: frequency,
+        photos: photos, // Save the ACTUAL base64 image data
         status: "pending",
         createdAt: new Date()
       });
@@ -377,36 +406,19 @@ function BookingWizard({ user, profile, onCancel }) {
     }
   };
 
+  // --- STEPS ---
   if (step === 1) return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10 px-4">
       <div className="w-full max-w-lg">
         <h1 className="text-3xl font-bold text-center mb-2 text-gray-800">Find a Lawn Pro</h1>
         <p className="text-center text-gray-500 mb-8">Select a professional in your area.</p>
-        
-        {loadingPros ? (
-          <p className="text-center">Finding pros...</p>
-        ) : pros.length === 0 ? (
-          <p className="text-center text-gray-500">No providers found nearby.</p>
-        ) : (
+        {loadingPros ? <p className="text-center">Finding pros...</p> : pros.length === 0 ? <p className="text-center text-gray-500">No providers found.</p> : (
           <div className="flex flex-col gap-4">
             {pros.map(pro => (
-              <button 
-                key={pro.id}
-                onClick={() => { setSelectedPro(pro); setStep(2); }}
-                className="flex items-center p-6 bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md hover:border-green-500 transition-all text-left w-full group"
-              >
+              <button key={pro.id} onClick={() => { setSelectedPro(pro); setStep(2); }} className="flex items-center p-6 bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md hover:border-green-500 transition-all text-left w-full group">
                 <img src={pro.image} alt={pro.name} className="w-16 h-16 rounded-full mr-6 border-2 border-gray-100" />
-                <div>
-                  <h3 className="text-xl font-semibold group-hover:text-green-700">{pro.name}</h3>
-                  <p className="text-gray-500">{pro.area}</p>
-                  <div className="flex items-center mt-1">
-                    <span className="text-yellow-400">★</span>
-                    <span className="ml-1 text-sm font-medium text-gray-700">{pro.rating} Rating</span>
-                  </div>
-                </div>
-                <div className="ml-auto">
-                  <span className="px-4 py-2 bg-green-50 text-green-700 rounded-lg font-medium group-hover:bg-green-600 group-hover:text-white transition-colors">Select</span>
-                </div>
+                <div><h3 className="text-xl font-semibold group-hover:text-green-700">{pro.name}</h3><p className="text-gray-500">{pro.area}</p><div className="flex items-center mt-1"><span className="text-yellow-400">★</span><span className="ml-1 text-sm font-medium text-gray-700">{pro.rating} Rating</span></div></div>
+                <div className="ml-auto"><span className="px-4 py-2 bg-green-50 text-green-700 rounded-lg font-medium group-hover:bg-green-600 group-hover:text-white transition-colors">Select</span></div>
               </button>
             ))}
           </div>
@@ -418,23 +430,21 @@ function BookingWizard({ user, profile, onCancel }) {
 
   if (step === 2) return (
     <div className="max-w-lg mx-auto">
-      <h2 className="text-2xl font-bold mb-4">Verify Info</h2>
-      <div className="mb-4 bg-blue-50 p-3 rounded-lg flex items-center">
-        <input type="checkbox" checked={useProfileAddress} onChange={e => setUseProfileAddress(e.target.checked)} className="mr-2 h-5 w-5" />
-        <label>Use Default Profile Address</label>
-      </div>
-      <div className="space-y-3">
+      <h2 className="text-2xl font-bold mb-4">Verify Info & Photos</h2>
+      <div className="mb-4 bg-blue-50 p-3 rounded-lg flex items-center"><input type="checkbox" checked={useProfileAddress} onChange={e => setUseProfileAddress(e.target.checked)} className="mr-2 h-5 w-5" /><label>Use Default Profile Address</label></div>
+      <div className="space-y-3 mb-6">
         <input type="text" placeholder="Address" value={customerInfo.address} disabled={useProfileAddress} onChange={e => setCustomerInfo({...customerInfo, address: e.target.value})} className="w-full p-2 border rounded" />
-        <div className="grid grid-cols-3 gap-2">
-          <input type="text" placeholder="City" value={customerInfo.city} disabled={useProfileAddress} className="w-full p-2 border rounded" />
-          <input type="text" placeholder="State" value={customerInfo.state} disabled={useProfileAddress} className="w-full p-2 border rounded" />
-          <input type="text" placeholder="Zip" value={customerInfo.zip} disabled={useProfileAddress} className="w-full p-2 border rounded" />
-        </div>
+        <div className="grid grid-cols-3 gap-2"><input type="text" placeholder="City" value={customerInfo.city} disabled={useProfileAddress} className="w-full p-2 border rounded" /><input type="text" placeholder="State" value={customerInfo.state} disabled={useProfileAddress} className="w-full p-2 border rounded" /><input type="text" placeholder="Zip" value={customerInfo.zip} disabled={useProfileAddress} className="w-full p-2 border rounded" /></div>
       </div>
-      <div className="flex gap-2 mt-4">
-        <button onClick={() => setStep(1)} className="px-4 py-2 text-gray-600">Back</button>
-        <button onClick={() => setStep(3)} className="flex-1 bg-green-600 text-white py-2 rounded">Next</button>
+      <div className="border-t pt-4">
+         <label className="block text-sm font-medium text-gray-700 mb-2">Upload Property Photos (Optional)</label>
+         <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-green-500 transition-colors">
+            <input type="file" multiple accept="image/*" onChange={handleFileChange} className="hidden" id="photo-upload" />
+            <label htmlFor="photo-upload" className="cursor-pointer"><div className="text-gray-500"><span className="text-green-600 font-bold hover:underline">Click to upload</span> or drag and drop</div><p className="text-xs text-gray-400 mt-1">Max 4 photos, 500KB each.</p></label>
+         </div>
+         {photos.length > 0 && <div className="mt-4 grid grid-cols-4 gap-2">{photos.map((src, i) => <img key={i} src={src} alt="Preview" className="w-full h-16 object-cover rounded border" />)}</div>}
       </div>
+      <div className="flex gap-2 mt-6"><button onClick={() => setStep(1)} className="px-4 py-2 text-gray-600">Back</button><button onClick={() => setStep(3)} className="flex-1 bg-green-600 text-white py-2 rounded">Next</button></div>
     </div>
   );
 
@@ -443,9 +453,7 @@ function BookingWizard({ user, profile, onCancel }) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10 px-4">
         <div className="w-full max-w-lg">
-          <button onClick={() => setStep(2)} className="text-sm text-gray-500 mb-4 hover:underline flex items-center">
-            <span className="mr-1">←</span> Back to Info
-          </button>
+          <button onClick={() => setStep(2)} className="text-sm text-gray-500 mb-4 hover:underline flex items-center"><span className="mr-1">←</span> Back to Info</button>
           <h2 className="text-3xl font-bold mb-2 text-gray-800 text-center">Select a Service</h2>
           <div className="space-y-8">
             {categories.map(cat => (
@@ -454,10 +462,7 @@ function BookingWizard({ user, profile, onCancel }) {
                 <div className="flex flex-col space-y-4">
                   {SERVICES.filter(s => s.category === cat).map(service => (
                     <button key={service.id} onClick={() => { setSelectedService(service); setStep(4); }} className="w-full flex flex-col text-left p-4 border border-gray-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition-all group">
-                      <div className="flex justify-between items-center w-full mb-2">
-                        <span className="font-bold text-lg text-gray-900 group-hover:text-green-700">{service.title}</span>
-                        <span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded-full uppercase tracking-wide">{service.price}</span>
-                      </div>
+                      <div className="flex justify-between items-center w-full mb-2"><span className="font-bold text-lg text-gray-900 group-hover:text-green-700">{service.title}</span><span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded-full uppercase tracking-wide">{service.price}</span></div>
                       <p className="text-sm text-gray-500 group-hover:text-gray-700">{service.desc}</p>
                     </button>
                   ))}
@@ -499,17 +504,16 @@ export default function CustomerPortal() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, profile, preferences, booking
+  const [currentTab, setCurrentTab] = useState('dashboard'); 
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        // Fetch Profile
         const docSnap = await getDoc(doc(db, "users", currentUser.uid));
         if (docSnap.exists()) setProfile(docSnap.data());
       } else {
-        navigate('/'); // Redirect to login if not authenticated
+        navigate('/'); 
       }
     });
     return () => unsubscribe();
@@ -529,32 +533,17 @@ export default function CustomerPortal() {
         </div>
         <button onClick={() => auth.signOut()} className="text-sm text-red-500">Sign Out</button>
       </nav>
-
       <div className="flex-1 container mx-auto p-6">
-        {/* Header Action */}
         {currentTab === 'dashboard' && (
           <div className="flex justify-between items-center mb-8">
             <h2 className="text-2xl font-bold text-gray-800">Welcome, {profile?.fullName || user.email}</h2>
-            <button 
-              onClick={() => setCurrentTab('booking')}
-              className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-md hover:bg-green-700 transition-colors font-bold flex items-center gap-2"
-            >
-              <span>+</span> Request New Service
-            </button>
+            <button onClick={() => setCurrentTab('booking')} className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-md hover:bg-green-700 transition-colors font-bold flex items-center gap-2"><span>+</span> Request New Service</button>
           </div>
         )}
-
-        {/* Tab Content */}
         {currentTab === 'dashboard' && <DashboardHome user={user} />}
         {currentTab === 'profile' && <CustomerProfile user={user} profile={profile} setProfile={setProfile} />}
         {currentTab === 'preferences' && <CustomerPreferences user={user} profile={profile} setProfile={setProfile} />}
-        {currentTab === 'booking' && (
-          <BookingWizard 
-            user={user} 
-            profile={profile} 
-            onCancel={() => setCurrentTab('dashboard')} 
-          />
-        )}
+        {currentTab === 'booking' && <BookingWizard user={user} profile={profile} onCancel={() => setCurrentTab('dashboard')} />}
       </div>
     </div>
   );
