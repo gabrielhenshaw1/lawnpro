@@ -39,7 +39,7 @@ function WeatherWidget({ forecast, error }) {
         <div className="flex items-center gap-4 mt-2">
           <span className="text-5xl">{getWeatherIcon(current.weather_code)}</span>
           <div>
-            <p className="text-4xl font-bold">{Math.round(current.temperature_2m)}°C</p>
+            <p className="text-4xl font-bold">{Math.round(current.temperature_2m)}°F</p>
             <p className="text-blue-100 font-medium">
                 {getWeatherIcon(current.weather_code) === '☀️' ? 'Clear Skies' : 'Cloudy/Rain'}
             </p>
@@ -169,7 +169,7 @@ export default function DashboardPage({ onNavigate }) {
     // Fetch Weather
     const fetchWeather = async () => {
         try {
-            const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=37.69&longitude=-87.91&current=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,weather_code,precipitation_probability_max&timezone=America%2FChicago&forecast_days=14');
+            const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=37.69&longitude=-87.91&current=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,weather_code,precipitation_probability_max&timezone=America%2FChicago&forecast_days=14&temperature_unit=fahrenheit');
             if (!res.ok) throw new Error("Weather API error");
             const data = await res.json();
             setForecast(data);
