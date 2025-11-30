@@ -298,7 +298,7 @@ function CustomerPreferences({ user, profile, setProfile }) {
 /**
  * =================================================================
  * BLOCK 4: BookingWizard (Refactored)
- * Includes Dynamic Pro Fetching, Photo Upload, and 1-Col Layout
+ * Includes Dynamic Pro Fetching, 1-Col Layout
  * =================================================================
  */
 function BookingWizard({ user, profile, onCancel }) {
@@ -345,7 +345,6 @@ function BookingWizard({ user, profile, onCancel }) {
   const [frequency, setFrequency] = useState('One-time');
   const [availableSlots, setAvailableSlots] = useState([]); 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [photos, setPhotos] = useState([]); 
 
   useEffect(() => {
     if (useProfileAddress && profile) {
@@ -362,24 +361,6 @@ function BookingWizard({ user, profile, onCancel }) {
     setAvailableSlots(["09:00 AM", "10:00 AM", "11:00 AM", "01:00 PM", "02:00 PM"]); 
   };
 
-  // --- PHOTO CONVERSION ---
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-       const files = Array.from(e.target.files);
-       if (files.length > 4) { alert("Maximum 4 photos allowed."); return; }
-       const promises = files.map(file => {
-          return new Promise((resolve, reject) => {
-              if (file.size > 500000) { alert(`File ${file.name} too large. Max 500KB.`); reject("Too large"); return; }
-              const reader = new FileReader();
-              reader.readAsDataURL(file);
-              reader.onload = () => resolve(reader.result);
-              reader.onerror = error => reject(error);
-          });
-       });
-       Promise.all(promises).then(base64Images => setPhotos(base64Images));
-    }
-  };
-
   const handleSubmitRequest = async () => {
     setIsSubmitting(true);
     try {
@@ -394,7 +375,7 @@ function BookingWizard({ user, profile, onCancel }) {
         requestedDate: new Date(selectedDate),
         requestedTimeSlot: selectedTimeSlot,
         frequency: frequency,
-        photos: photos, // Save the ACTUAL base64 image data
+        // REMOVED: photos array
         status: "pending",
         createdAt: new Date()
       });
@@ -412,7 +393,7 @@ function BookingWizard({ user, profile, onCancel }) {
       <div className="w-full max-w-lg">
         <h1 className="text-3xl font-bold text-center mb-2 text-gray-800">Find a Lawn Pro</h1>
         <p className="text-center text-gray-500 mb-8">Select a professional in your area.</p>
-        {loadingPros ? <p className="text-center">Finding pros...</p> : pros.length === 0 ? <p className="text-center text-gray-500">No providers found.</p> : (
+        {loadingPros ? <p className="text-center">Finding pros...</p> : pros.length === 0 ? <p className="text-center text-gray-500">No providers found nearby.</p> : (
           <div className="flex flex-col gap-4">
             {pros.map(pro => (
               <button key={pro.id} onClick={() => { setSelectedPro(pro); setStep(2); }} className="flex items-center p-6 bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md hover:border-green-500 transition-all text-left w-full group">
@@ -430,19 +411,11 @@ function BookingWizard({ user, profile, onCancel }) {
 
   if (step === 2) return (
     <div className="max-w-lg mx-auto">
-      <h2 className="text-2xl font-bold mb-4">Verify Info & Photos</h2>
+      <h2 className="text-2xl font-bold mb-4">Verify Info</h2>
       <div className="mb-4 bg-blue-50 p-3 rounded-lg flex items-center"><input type="checkbox" checked={useProfileAddress} onChange={e => setUseProfileAddress(e.target.checked)} className="mr-2 h-5 w-5" /><label>Use Default Profile Address</label></div>
       <div className="space-y-3 mb-6">
         <input type="text" placeholder="Address" value={customerInfo.address} disabled={useProfileAddress} onChange={e => setCustomerInfo({...customerInfo, address: e.target.value})} className="w-full p-2 border rounded" />
         <div className="grid grid-cols-3 gap-2"><input type="text" placeholder="City" value={customerInfo.city} disabled={useProfileAddress} className="w-full p-2 border rounded" /><input type="text" placeholder="State" value={customerInfo.state} disabled={useProfileAddress} className="w-full p-2 border rounded" /><input type="text" placeholder="Zip" value={customerInfo.zip} disabled={useProfileAddress} className="w-full p-2 border rounded" /></div>
-      </div>
-      <div className="border-t pt-4">
-         <label className="block text-sm font-medium text-gray-700 mb-2">Upload Property Photos (Optional)</label>
-         <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-green-500 transition-colors">
-            <input type="file" multiple accept="image/*" onChange={handleFileChange} className="hidden" id="photo-upload" />
-            <label htmlFor="photo-upload" className="cursor-pointer"><div className="text-gray-500"><span className="text-green-600 font-bold hover:underline">Click to upload</span> or drag and drop</div><p className="text-xs text-gray-400 mt-1">Max 4 photos, 500KB each.</p></label>
-         </div>
-         {photos.length > 0 && <div className="mt-4 grid grid-cols-4 gap-2">{photos.map((src, i) => <img key={i} src={src} alt="Preview" className="w-full h-16 object-cover rounded border" />)}</div>}
       </div>
       <div className="flex gap-2 mt-6"><button onClick={() => setStep(1)} className="px-4 py-2 text-gray-600">Back</button><button onClick={() => setStep(3)} className="flex-1 bg-green-600 text-white py-2 rounded">Next</button></div>
     </div>
@@ -504,16 +477,17 @@ export default function CustomerPortal() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [currentTab, setCurrentTab] = useState('dashboard'); 
+  const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, profile, preferences, booking
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
+        // Fetch Profile
         const docSnap = await getDoc(doc(db, "users", currentUser.uid));
         if (docSnap.exists()) setProfile(docSnap.data());
       } else {
-        navigate('/'); 
+        navigate('/'); // Redirect to login if not authenticated
       }
     });
     return () => unsubscribe();
@@ -533,17 +507,32 @@ export default function CustomerPortal() {
         </div>
         <button onClick={() => auth.signOut()} className="text-sm text-red-500">Sign Out</button>
       </nav>
+
       <div className="flex-1 container mx-auto p-6">
+        {/* Header Action */}
         {currentTab === 'dashboard' && (
           <div className="flex justify-between items-center mb-8">
             <h2 className="text-2xl font-bold text-gray-800">Welcome, {profile?.fullName || user.email}</h2>
-            <button onClick={() => setCurrentTab('booking')} className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-md hover:bg-green-700 transition-colors font-bold flex items-center gap-2"><span>+</span> Request New Service</button>
+            <button 
+              onClick={() => setCurrentTab('booking')}
+              className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-md hover:bg-green-700 transition-colors font-bold flex items-center gap-2"
+            >
+              <span>+</span> Request New Service
+            </button>
           </div>
         )}
+
+        {/* Tab Content */}
         {currentTab === 'dashboard' && <DashboardHome user={user} />}
         {currentTab === 'profile' && <CustomerProfile user={user} profile={profile} setProfile={setProfile} />}
         {currentTab === 'preferences' && <CustomerPreferences user={user} profile={profile} setProfile={setProfile} />}
-        {currentTab === 'booking' && <BookingWizard user={user} profile={profile} onCancel={() => setCurrentTab('dashboard')} />}
+        {currentTab === 'booking' && (
+          <BookingWizard 
+            user={user} 
+            profile={profile} 
+            onCancel={() => setCurrentTab('dashboard')} 
+          />
+        )}
       </div>
     </div>
   );

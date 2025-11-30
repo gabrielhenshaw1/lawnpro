@@ -1,316 +1,204 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../firebase.js'; 
-import { collection, onSnapshot, query, where, doc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 
-export default function DashboardPage() {
-  const [pendingBookings, setPendingBookings] = useState([]);
-  const [confirmedBookings, setConfirmedBookings] = useState([]);
-  const [loading, setLoading] = useState(true);
+// --- HELPERS ---
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function getWeatherIcon(code) {
+  if (code === 0) return '☀️'; 
+  if (code >= 1 && code <= 3) return '⛅'; 
+  if (code >= 51 && code <= 55) return '💧'; 
+  if (code >= 61 && code <= 67) return '🌧️'; 
+  if (code >= 71 && code <= 77) return '❄️'; 
+  if (code >= 95) return '⛈️'; 
+  return '☁️'; 
+}
+
+function getWeatherColor(code) {
+  if (code === 0) return 'bg-yellow-50 text-yellow-700';
+  if (code >= 51 && code <= 67) return 'bg-blue-100 text-blue-700'; 
+  if (code >= 71 && code <= 77) return 'bg-gray-200 text-gray-800'; 
+  if (code >= 95) return 'bg-red-100 text-red-700'; 
+  return 'bg-gray-100 text-gray-600';
+}
+
+// --- WEATHER WIDGET ---
+function WeatherWidget({ forecast, error }) {
+  if (error) return <div className="p-4 bg-red-50 rounded-lg text-red-600 border border-red-100">Weather currently unavailable.</div>;
+  if (!forecast || !forecast.current) return <div className="p-4 bg-gray-100 rounded-lg text-gray-500 animate-pulse">Loading weather data...</div>;
+
+  const current = forecast.current;
+  const precipChance = forecast.daily?.precipitation_probability_max?.[0] || 0;
   
-  // Local state for inputs
-  const [quoteInputs, setQuoteInputs] = useState({});
-  const [durationInputs, setDurationInputs] = useState({}); 
-  const [finalBillInputs, setFinalBillInputs] = useState({});
-  
-  // Image Modal State
-  const [selectedImage, setSelectedImage] = useState(null); 
+  return (
+    <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl text-white p-6 flex justify-between items-center shadow-lg">
+      <div>
+        <h3 className="font-bold opacity-90 text-sm uppercase tracking-wider">Morganfield, KY Weather</h3>
+        <div className="flex items-center gap-4 mt-2">
+          <span className="text-5xl">{getWeatherIcon(current.weather_code)}</span>
+          <div>
+            <p className="text-4xl font-bold">{Math.round(current.temperature_2m)}°C</p>
+            <p className="text-blue-100 font-medium">
+                {getWeatherIcon(current.weather_code) === '☀️' ? 'Clear Skies' : 'Cloudy/Rain'}
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="text-right">
+        <div className="bg-white/20 p-3 rounded-lg backdrop-blur-sm">
+          <p className="text-xs opacity-80 uppercase font-bold">Rain Risk Today</p>
+          <p className="text-2xl font-bold">{precipChance}%</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return; 
-
-    setLoading(true);
+// --- CALENDAR GRID ---
+function CalendarGrid({ bookings, forecastDays }) {
+  const getCalendarDays = () => {
+    const today = new Date();
+    const days = [];
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - today.getDay()); 
     
-    // 1. PENDING QUERY
-    const pendingQuery = query(
-      collection(db, "bookings"), 
-      where("proId", "==", user.uid),
-      where("status", "in", ["pending", "quote_received"]) 
-    );
-    
-    // 2. CONFIRMED QUERY
-    const confirmedQuery = query(
-      collection(db, "bookings"), 
-      where("status", "==", "confirmed"),
-      where("proId", "==", user.uid)
-    );
-
-    const unsubscribePending = onSnapshot(pendingQuery, (querySnapshot) => {
-      const bookings = [];
-      querySnapshot.forEach((doc) => bookings.push({ id: doc.id, ...doc.data() }));
-      bookings.sort((a, b) => a.createdAt - b.createdAt);
-      setPendingBookings(bookings);
-      setLoading(false);
-    });
-
-    const unsubscribeConfirmed = onSnapshot(confirmedQuery, (querySnapshot) => {
-      const bookings = [];
-      querySnapshot.forEach((doc) => bookings.push({ id: doc.id, ...doc.data() }));
-      bookings.sort((a, b) => a.requestedDate - b.requestedDate);
-      setConfirmedBookings(bookings);
-      setLoading(false);
-    });
-
-    return () => {
-      unsubscribePending();
-      unsubscribeConfirmed();
-    };
-  }, []); 
-
-  // --- ACTIONS ---
-
-  const handleApprove = async (id) => {
-    if(!window.confirm("Confirm this job immediately without a quote?")) return;
-    const duration = durationInputs[id] || 1; 
-    
-    try { 
-      await updateDoc(doc(db, "bookings", id), { 
-        status: "confirmed",
-        estimatedDuration: parseFloat(duration) 
-      }); 
-    } 
-    catch (error) { console.error("Error approving:", error); }
-  };
-
-  const handleDeny = async (id) => {
-    if(!window.confirm("Deny this request?")) return;
-    try { await updateDoc(doc(db, "bookings", id), { status: "denied" }); } 
-    catch (error) { console.error("Error denying:", error); }
-  };
-
-  const handleSendQuote = async (id) => {
-    const amount = quoteInputs[id];
-    const duration = durationInputs[id] || 1;
-    
-    if (!amount) return alert("Please enter a quote amount.");
-
-    try {
-      await updateDoc(doc(db, "bookings", id), { 
-        status: "quote_received",
-        quoteAmount: amount,
-        estimatedDuration: parseFloat(duration),
-        proNotes: "Based on your property size and photos." 
-      });
-      alert("Quote sent to customer!");
-    } catch (error) {
-      console.error("Error sending quote:", error);
+    for (let i = 0; i < 35; i++) {
+      const day = new Date(startDate);
+      day.setDate(startDate.getDate() + i);
+      days.push(day);
     }
+    return days;
   };
 
-  const handleMarkComplete = async (id) => {
-    const finalAmount = finalBillInputs[id];
-    if(!window.confirm("Mark this job as complete?")) return;
+  const calendarDays = getCalendarDays();
+  const today = new Date();
 
-    try {
-      await updateDoc(doc(db, "bookings", id), { 
-        status: "completed",
-        finalBillAmount: finalAmount || null,
-        completedAt: new Date()
-      });
-    } catch (error) {
-      console.error("Error completing job:", error);
-    }
-  };
-
-  const handleQuoteInputChange = (id, value) => {
-    setQuoteInputs(prev => ({ ...prev, [id]: value }));
+  const getBookingsForDay = (day) => {
+     return bookings.filter(b => {
+        const dateSource = b.scheduledDate || b.requestedDate;
+        const d = dateSource && dateSource.seconds ? new Date(dateSource.seconds * 1000) : new Date(dateSource);
+        if (!d || isNaN(d.getTime())) return false; 
+        return d.getDate() === day.getDate() && d.getMonth() === day.getMonth() && d.getFullYear() === day.getFullYear();
+     });
   };
 
   return (
-    <div className="space-y-8 relative">
+    <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200">
+      <h2 className="text-xl font-bold mb-4 text-gray-800">30-Day Schedule Overview</h2>
       
-      {/* --- IMAGE ZOOM MODAL --- */}
-      {selectedImage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90" onClick={() => setSelectedImage(null)}>
-          <div className="relative max-w-4xl max-h-screen p-4">
-            <img src={selectedImage} alt="Zoomed" className="max-w-full max-h-[90vh] rounded shadow-lg" />
-            <button 
-              className="absolute top-4 right-4 bg-white text-black rounded-full w-10 h-10 flex items-center justify-center font-bold hover:bg-gray-200"
-              onClick={() => setSelectedImage(null)}
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* --- PENDING REQUESTS COLUMN --- */}
-      <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-        <h2 className="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Pending Requests & Quotes</h2>
-        {loading && <p>Loading...</p>}
-        {!loading && pendingBookings.length === 0 && <p className="text-gray-500">No pending requests.</p>}
-        
-        <div className="space-y-6">
-          {pendingBookings.map((booking) => (
-            <div key={booking.id} className="p-5 border rounded-xl bg-gray-50 shadow-sm hover:shadow-md transition-shadow">
-              
-              {/* Header Info */}
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h3 className="font-bold text-lg text-gray-900">{booking.service}</h3>
-                  <p className="text-sm text-gray-600">Customer: <span className="font-medium">{booking.customerName}</span></p>
-                  <p className="text-sm text-gray-500">{booking.address}</p>
-                  <p className="text-sm text-blue-600 mt-1">
-                    Requested: {booking.requestedDate ? new Date(booking.requestedDate.seconds * 1000).toLocaleDateString() : 'TBD'} 
-                    {booking.requestedTimeSlot ? ` @ ${booking.requestedTimeSlot}` : ''}
-                  </p>
-                </div>
-                <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${booking.status === 'quote_received' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`}>
-                  {booking.status === 'quote_received' ? 'Waiting on Customer' : 'Action Needed'}
+      <div className="grid grid-cols-7 gap-1 bg-gray-100 p-1 rounded-lg border border-gray-200">
+         {DAY_NAMES.map(d => (
+           <div key={d} className="bg-gray-200 p-2 text-center font-bold text-xs text-gray-600 uppercase">{d}</div>
+         ))}
+         
+         {calendarDays.map((day, index) => {
+           const dayBookings = getBookingsForDay(day);
+           const isToday = day.toDateString() === today.toDateString();
+           const isPast = day < today && !isToday;
+           
+           const forecastIndex = index; 
+           const hasForecast = forecastDays?.daily?.time?.[forecastIndex];
+           
+           const forecast = hasForecast ? { 
+                weather_code: forecastDays.daily.weather_code[forecastIndex],
+                temperature_2m_max: forecastDays.daily.temperature_2m_max[forecastIndex]
+           } : null;
+           
+           return (
+             <div key={day.toString()} className={`h-32 p-2 border border-gray-100 flex flex-col transition-colors relative ${isToday ? 'bg-blue-50 border-blue-200' : isPast ? 'bg-gray-50' : 'bg-white hover:bg-gray-100'}`}>
+                <span className={`text-xs font-bold mb-1 ${isToday ? 'text-blue-700' : isPast ? 'text-gray-400' : 'text-gray-900'}`}>
+                  {day.getDate()}
                 </span>
-              </div>
-
-              {/* PHOTOS SECTION */}
-              {booking.photos && booking.photos.length > 0 && (
-                <div className="mb-4 bg-white p-3 rounded border border-gray-200">
-                  <p className="text-xs font-bold text-gray-500 uppercase mb-2">Property Photos Attached:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {booking.photos.map((photoData, idx) => (
-                      // Check if it's a base64 data string (starts with "data:")
-                      typeof photoData === 'string' && photoData.startsWith('data:') ? (
-                        <img 
-                          key={idx} 
-                          src={photoData} 
-                          alt="Property" 
-                          className="w-24 h-24 object-cover rounded border border-gray-300 hover:scale-105 transition-transform cursor-pointer shadow-sm" 
-                          onClick={() => setSelectedImage(photoData)} 
-                          title="Click to zoom"
-                        />
-                      ) : (
-                        // Fallback for old data (filenames)
-                        <div key={idx} className="flex items-center gap-2 bg-gray-100 px-3 py-1 rounded-full text-xs text-gray-700 border">
-                          <span>📷 {typeof photoData === 'string' ? photoData : 'Image'}</span>
-                        </div>
-                      )
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ACTION AREA */}
-              {booking.status === 'pending' ? (
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Send Quote or Approve:</p>
-                  
-                  <div className="flex flex-wrap gap-3 items-end">
-                    {/* Price Input */}
-                    <div className="w-32">
-                      <label className="text-xs text-gray-500 block mb-1">Price ($)</label>
-                      <input 
-                        type="number" 
-                        placeholder="Price"
-                        className="w-full pl-6 pr-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm"
-                        value={quoteInputs[booking.id] || ''}
-                        onChange={(e) => handleQuoteInputChange(booking.id, e.target.value)}
-                      />
+                {forecast && (
+                    <div className={`absolute top-0 right-0 p-1 text-xs font-semibold rounded-bl-lg ${getWeatherColor(forecast.weather_code)}`}>
+                        {getWeatherIcon(forecast.weather_code)} {Math.round(forecast.temperature_2m_max)}°
                     </div>
-
-                    {/* Duration Input */}
-                    <div className="w-32">
-                      <label className="text-xs text-gray-500 block mb-1">Est. Duration (Hrs)</label>
-                      <select
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm bg-white"
-                        value={durationInputs[booking.id] || 1}
-                        onChange={(e) => setDurationInputs(prev => ({ ...prev, [booking.id]: e.target.value }))}
-                      >
-                        <option value="0.5">30 Mins</option>
-                        <option value="1">1 Hour</option>
-                        <option value="1.5">1.5 Hours</option>
-                        <option value="2">2 Hours</option>
-                        <option value="3">3 Hours</option>
-                        <option value="4">4 Hours</option>
-                      </select>
+                )}
+                <div className="flex-1 overflow-y-auto space-y-1 pt-4 custom-scrollbar">
+                  {dayBookings.map(b => (
+                    <div key={b.id} className="bg-green-100 text-green-800 text-[10px] p-1 rounded truncate border border-green-200 font-medium" title={`${b.service} (${b.customerName})`}>
+                      {b.requestedTimeSlot || 'TBD'} - {b.service}
                     </div>
-
-                    <div className="flex gap-2">
-                      <button onClick={() => handleSendQuote(booking.id)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 text-sm h-[38px]">
-                        Send Quote
-                      </button>
-                      <button onClick={() => handleApprove(booking.id)} className="text-green-600 hover:text-green-800 text-sm font-medium h-[38px] px-2">
-                        Quick Approve
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-2 text-right">
-                    <button onClick={() => handleDeny(booking.id)} className="text-red-500 hover:text-red-700 text-xs font-medium">
-                      Deny Request
-                    </button>
-                  </div>
+                  ))}
                 </div>
-              ) : (
-                <div className="mt-4 text-sm text-gray-500 italic bg-gray-50 p-2 rounded text-center">
-                  Waiting for customer to accept quote (${booking.quoteAmount})...
-                </div>
-              )}
-
-            </div>
-          ))}
-        </div>
+             </div>
+           );
+         })}
       </div>
+    </div>
+  );
+}
 
-      {/* --- CONFIRMED SCHEDULE COLUMN --- */}
-      <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-        <h2 className="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Confirmed Schedule</h2>
-        {loading && <p>Loading...</p>}
-        {!loading && confirmedBookings.length === 0 && <p className="text-gray-500">No confirmed jobs.</p>}
-        
-        <div className="space-y-4">
-          {confirmedBookings.map((booking) => (
-            <div key={booking.id} className="p-4 border-l-4 border-green-500 bg-white rounded shadow-sm flex justify-between items-start">
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                   <h3 className="font-bold text-gray-900 text-lg">{booking.service}</h3>
-                   {booking.frequency && booking.frequency !== 'One-time' && (
-                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-medium">{booking.frequency}</span>
-                   )}
-                </div>
-                <p className="text-sm text-gray-600 font-medium mt-1">{booking.customerName}</p>
-                <p className="text-sm text-gray-500">{booking.address}</p>
-                {booking.estimatedDuration && (
-                  <p className="text-xs text-gray-500 mt-1">Est. Duration: {booking.estimatedDuration} hrs</p>
-                )}
-                
-                {/* Show Photos in Confirmed too */}
-                {booking.photos && booking.photos.length > 0 && (
-                  <div className="mt-3 flex gap-2">
-                    {booking.photos.slice(0, 3).map((p, i) => (
-                       typeof p === 'string' && p.startsWith('data:') ? 
-                         <img key={i} src={p} className="w-10 h-10 object-cover rounded border border-gray-200 cursor-pointer" onClick={() => setSelectedImage(p)} alt="ref"/> : null
-                    ))}
-                    {booking.photos.length > 3 && <span className="text-xs text-gray-400 self-center">+{booking.photos.length - 3} more</span>}
-                  </div>
-                )}
-              </div>
+/**
+ * MAIN DASHBOARD EXPORT
+ */
+export default function DashboardPage({ onNavigate }) {
+  const [pendingCount, setPendingCount] = useState(0);
+  const [bookings, setBookings] = useState([]);
+  const [forecast, setForecast] = useState(null);
+  const [weatherError, setWeatherError] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-              <div className="text-right pl-4 flex flex-col items-end">
-                <p className="text-lg font-bold text-gray-800">
-                  {booking.requestedDate ? new Date(booking.requestedDate.seconds * 1000).toLocaleDateString() : 'Date not set'}
-                </p>
-                <p className="text-sm text-gray-500 mb-3">{booking.requestedTimeSlot}</p>
-                
-                {booking.quoteAmount && <span className="text-xs font-bold text-green-700 bg-green-50 px-2 py-1 rounded mb-3">Quote: ${booking.quoteAmount}</span>}
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+         const confirmedQuery = query(collection(db, "bookings"), where("proId", "==", user.uid), where("status", "==", "confirmed"));
+         const unsubscribeBookings = onSnapshot(confirmedQuery, (snapshot) => {
+           const list = [];
+           snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+           setBookings(list);
+           setLoading(false);
+         });
 
-                <div className="flex items-center gap-2 mt-auto">
-                    <input 
-                        type="number" 
-                        placeholder="Final Bill $"
-                        className="w-24 px-2 py-1 text-sm border rounded text-right"
-                        value={finalBillInputs[booking.id] || (booking.quoteAmount || '')}
-                        onChange={(e) => setFinalBillInputs(prev => ({...prev, [booking.id]: e.target.value}))}
-                    />
-                    <button 
-                        onClick={() => handleMarkComplete(booking.id)}
-                        className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 transition-colors"
-                    >
-                        Complete
-                    </button>
-                </div>
-              </div>
+         const pendingQuery = query(collection(db, "bookings"), where("proId", "==", user.uid), where("status", "in", ["pending", "quote_received"]));
+         const unsubscribePending = onSnapshot(pendingQuery, (snapshot) => {
+           setPendingCount(snapshot.size);
+         });
 
-            </div>
-          ))}
-        </div>
+         return () => {
+            unsubscribeBookings();
+            unsubscribePending();
+         };
+      } else {
+         setLoading(false);
+      }
+    });
+
+    // Fetch Weather
+    const fetchWeather = async () => {
+        try {
+            const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=37.69&longitude=-87.91&current=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,weather_code,precipitation_probability_max&timezone=America%2FChicago&forecast_days=14');
+            if (!res.ok) throw new Error("Weather API error");
+            const data = await res.json();
+            setForecast(data);
+        } catch (e) {
+            console.error("Weather fetch failed:", e);
+            setWeatherError(true);
+        }
+    };
+    fetchWeather();
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <WeatherWidget forecast={forecast} error={weatherError} />
+      {loading ? <p className="text-center p-8">Loading dashboard...</p> : <CalendarGrid bookings={bookings} forecastDays={forecast} />}
+      
+      <div className="bg-blue-50 rounded-xl p-6 border border-blue-100 flex justify-between items-center shadow-md">
+         <div>
+            <h3 className="font-bold text-blue-900 text-lg">New Requests to Review</h3>
+            <p className="text-blue-700 text-sm">You have <span className="font-bold">{pendingCount}</span> request(s) or quotes waiting.</p>
+         </div>
+         <button 
+            onClick={() => onNavigate('Requests')} 
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700 shadow-sm"
+          >
+            Review Requests ({pendingCount}) →
+         </button>
       </div>
     </div>
   );
