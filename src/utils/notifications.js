@@ -3,13 +3,14 @@ import emailjs from '@emailjs/browser';
 /**
  * NOTIFICATION UTILITY
  * Sends real emails via EmailJS.
+ * securely loads keys from .env file.
  */
 
-// REPLACE THESE WITH YOUR ACTUAL KEYS FROM EMAILJS DASHBOARD
-const SERVICE_ID = 'YOUR_SERVICE_ID';   
-const TEMPLATE_ID_CUSTOMER = 'YOUR_CUSTOMER_TEMPLATE_ID'; 
-const TEMPLATE_ID_ADMIN = 'YOUR_ADMIN_TEMPLATE_ID'; 
-const PUBLIC_KEY = 'YOUR_PUBLIC_KEY';   
+// LOAD KEYS FROM ENVIRONMENT VARIABLES
+const SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
+const TEMPLATE_ID_CUSTOMER = import.meta.env.VITE_EMAILJS_TEMPLATE_CUSTOMER;
+const TEMPLATE_ID_ADMIN = import.meta.env.VITE_EMAILJS_TEMPLATE_ADMIN;
+const PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 
 export const sendStatusEmail = async (toEmail, type, link, data = {}) => {
   console.log(`[EmailJS] Preparing to send to ${toEmail}...`);
@@ -47,9 +48,7 @@ export const sendStatusEmail = async (toEmail, type, link, data = {}) => {
       emailParams.message = "Good news! Your service request has been accepted and scheduled.";
       break;
 
-    // NEW: Handle the Reschedule Loop
     case 'reschedule_proposal':
-      // Check who initiated to decide template (if notifying Admin, use Admin template)
       if (data.isToAdmin) {
         templateId = TEMPLATE_ID_ADMIN;
         emailParams.subject = "Reschedule Requested";
@@ -71,13 +70,15 @@ export const sendStatusEmail = async (toEmail, type, link, data = {}) => {
   }
 
   try {
-    if (SERVICE_ID === 'YOUR_SERVICE_ID') {
-      console.warn("[EmailJS] Simulating email...");
-      console.log("TEMPLATE:", templateId, "DATA:", emailParams);
+    // Check if keys are loaded
+    if (!SERVICE_ID || !PUBLIC_KEY) {
+      console.warn("[EmailJS] Missing .env keys. Email simulated.");
+      console.log("DATA:", emailParams);
       return; 
     }
-    await emailjs.send(SERVICE_ID, templateId, emailParams, PUBLIC_KEY);
-    console.log('[EmailJS] Sent');
+    
+    const response = await emailjs.send(SERVICE_ID, templateId, emailParams, PUBLIC_KEY);
+    console.log('[EmailJS] Sent Successfully', response.status, response.text);
   } catch (error) {
     console.error('[EmailJS] Failed:', error);
   }

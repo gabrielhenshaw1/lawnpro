@@ -1,3 +1,6 @@
 node_modules
-lp_keys.env
+dist
+.DS_Store
 .env
+.env.local
+lp_keys.env
