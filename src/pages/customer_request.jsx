@@ -127,61 +127,138 @@ function CustomCalendar({ value, onChange, isBlocked }) {
 function DashboardHome({ user }) {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // Reschedule State
+  const [rescheduleTarget, setRescheduleTarget] = useState(null); 
+  const [newDate, setNewDate] = useState('');
+  const [newTime, setNewTime] = useState('');
 
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, "bookings"), where("customerEmail", "==", user.email));
-    getDocs(q).then((snapshot) => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       const list = [];
       snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
       list.sort((a, b) => b.requestedDate.seconds - a.requestedDate.seconds);
       setBookings(list);
       setLoading(false);
     });
+    return () => unsubscribe();
   }, [user]);
+
+  const handleCancel = async (id) => {
+    if(!window.confirm("Are you sure you want to CANCEL this service?")) return;
+    await updateDoc(doc(db, "bookings", id), { status: 'cancelled' });
+    // Notify Admin of cancellation
+    await sendStatusEmail("provider@lawnpro.com", "cancelled", "", { isToAdmin: true });
+  };
+
+  // --- CUSTOMER PROPOSES NEW TIME ---
+  const handleSubmitReschedule = async () => {
+    if (!newDate || !newTime) return alert("Select date and time.");
+    
+    // 1. Update DB to flip status to Provider
+    await updateDoc(doc(db, "bookings", rescheduleTarget.id), {
+      status: 'reschedule_pending_provider',
+      proposedDate: new Date(newDate),
+      proposedTime: newTime,
+      rescheduleInitiator: 'customer'
+    });
+
+    // 2. Notify Admin
+    await sendStatusEmail("provider@lawnpro.com", "reschedule_proposal", `http://localhost:5173/admin`, {
+      isToAdmin: true,
+      proposedInfo: `${newDate} at ${newTime}`
+    });
+
+    setRescheduleTarget(null);
+    alert("Reschedule request sent to provider.");
+  };
+
+  // --- CUSTOMER ACCEPTS ADMIN'S TIME ---
+  const handleApproveReschedule = async (booking) => {
+    await updateDoc(doc(db, "bookings", booking.id), {
+      status: 'confirmed',
+      scheduledDate: booking.proposedDate,
+      requestedTimeSlot: booking.proposedTime, 
+      proposedDate: null,
+      proposedTime: null
+    });
+    
+    // Notify Admin of acceptance
+    await sendStatusEmail("provider@lawnpro.com", "confirmed", `http://localhost:5173/admin`, { isToAdmin: true });
+    alert("New time confirmed!");
+  };
 
   const handleAcceptQuote = async (bookingId) => {
     if(!window.confirm("Accept this quote and schedule the service?")) return;
     try {
       await updateDoc(doc(db, "bookings", bookingId), { status: 'confirmed' });
-      // NOTIFY: Client confirmed (To Provider)
-      // Note: Ideally we'd fetch the pro's email here too, but for accept/deny we use a default or need to store proEmail on booking
-      await sendStatusEmail("provider@lawnpro.com", "confirmed", `http://localhost:5173/admin`); 
+      await sendStatusEmail("provider@lawnpro.com", "confirmed", `http://localhost:5173/admin`, { isToAdmin: true }); 
       alert("Quote accepted! Service is now scheduled.");
-      window.location.reload(); 
     } catch (e) { console.error(e); }
   };
 
-  if (loading) return <p className="text-center p-4">Loading your services...</p>;
+  if (loading) return <p className="text-center p-4">Loading services...</p>;
 
-  const requests = bookings.filter(b => ['pending', 'quote_received'].includes(b.status));
-  const upcoming = bookings.filter(b => ['confirmed', 'scheduled', 'completed'].includes(b.status));
+  const active = bookings.filter(b => ['pending', 'quote_received', 'reschedule_pending_provider', 'reschedule_pending_customer'].includes(b.status));
+  const upcoming = bookings.filter(b => ['confirmed', 'scheduled'].includes(b.status));
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
+      
+      {/* RESCHEDULE MODAL */}
+      {rescheduleTarget && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-xl font-bold mb-4">Reschedule Service</h3>
+            <p className="mb-4 text-gray-600">Propose a new time for: <strong>{rescheduleTarget.service}</strong></p>
+            <div className="space-y-4">
+              <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">New Date</label><input type="date" className="w-full p-2 border rounded" min={new Date().toISOString().split('T')[0]} onChange={e => setNewDate(e.target.value)} /></div>
+              <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">New Time</label><select className="w-full p-2 border rounded" onChange={e => setNewTime(e.target.value)}><option value="">Select Time</option>{["08:00 AM", "09:00 AM", "10:00 AM", "11:00 AM", "01:00 PM", "02:00 PM", "03:00 PM"].map(t => <option key={t}>{t}</option>)}</select></div>
+            </div>
+            <div className="flex gap-2 mt-6">
+              <button onClick={() => setRescheduleTarget(null)} className="flex-1 py-2 text-gray-500 hover:bg-gray-100 rounded">Cancel</button>
+              <button onClick={handleSubmitReschedule} className="flex-1 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700">Send Request</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACTIVE REQUESTS & RESCHEDULES */}
       <div>
-        <h2 className="text-2xl font-bold mb-4 text-gray-800">Active Requests</h2>
-        {requests.length === 0 ? <p className="text-gray-500 italic">No pending requests.</p> : (
+        <h2 className="text-2xl font-bold mb-4 text-gray-800">Active / Pending</h2>
+        {active.length === 0 ? <p className="text-gray-500 italic">No active requests.</p> : (
           <div className="space-y-4">
-            {requests.map(booking => (
-              <div key={booking.id} className="bg-white p-6 rounded-lg shadow-sm border border-blue-100">
+            {active.map(b => (
+              <div key={b.id} className={`p-6 rounded-lg shadow-sm border ${b.status.includes('reschedule') ? 'bg-orange-50 border-orange-200' : 'bg-white border-blue-100'}`}>
                 <div className="flex justify-between items-start">
                   <div>
-                    <h3 className="font-bold text-lg text-gray-800">{booking.service}</h3>
-                    <p className="text-sm text-gray-500">Requested for: {new Date(booking.requestedDate.seconds * 1000).toLocaleDateString()}</p>
-                    <p className="text-sm text-gray-500">Pro: {booking.proName}</p>
+                    <h3 className="font-bold text-lg text-gray-900">{b.service}</h3>
+                    <p className="text-sm text-gray-500">Current: {new Date(b.requestedDate.seconds * 1000).toLocaleDateString()} at {b.requestedTimeSlot}</p>
                   </div>
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 uppercase tracking-wide">{booking.status.replace('_', ' ')}</span>
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-white border shadow-sm">
+                    {b.status.replace(/_/g, ' ').toUpperCase()}
+                  </span>
                 </div>
-                {booking.status === 'quote_received' && (
-                  <div className="mt-4 bg-yellow-50 p-4 rounded-lg border border-yellow-100">
-                    <p className="text-sm font-bold text-yellow-800 uppercase mb-2">Quote Received</p>
-                    <div className="flex justify-between items-center mb-4"><span className="text-gray-700">Estimated Cost:</span><span className="text-2xl font-bold text-green-700">${booking.quoteAmount}</span></div>
-                    {booking.proNotes && <p className="text-sm text-gray-600 mb-4 italic">" {booking.proNotes} "</p>}
-                    <div className="flex gap-3">
-                      <button onClick={() => handleAcceptQuote(booking.id)} className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors">Accept & Schedule</button>
-                      <button className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors">Decline</button>
+
+                {/* Incoming Reschedule Offer (From Admin) */}
+                {b.status === 'reschedule_pending_customer' && (
+                  <div className="mt-4 bg-white p-4 rounded border border-orange-200">
+                    <p className="text-sm font-bold text-orange-800">Provider Proposed New Time:</p>
+                    <p className="text-lg font-bold text-gray-800 my-1">{new Date(b.proposedDate.seconds * 1000).toLocaleDateString()} @ {b.proposedTime}</p>
+                    <div className="flex gap-2 mt-3">
+                      <button onClick={() => handleApproveReschedule(b)} className="bg-green-600 text-white px-4 py-2 rounded text-sm font-bold">Accept New Time</button>
+                      <button onClick={() => setRescheduleTarget(b)} className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded text-sm font-bold hover:bg-gray-50">Propose Alternative</button>
+                      <button onClick={() => handleCancel(b.id)} className="text-red-500 px-4 py-2 text-sm hover:underline">Cancel Service</button>
                     </div>
+                  </div>
+                )}
+                
+                {b.status === 'quote_received' && (
+                  <div className="mt-4">
+                    <div className="flex justify-between items-center mb-2"><span className="text-gray-700 font-bold">Quote:</span><span className="text-xl font-bold text-green-700">${b.quoteAmount}</span></div>
+                    <button onClick={() => handleAcceptQuote(b.id)} className="w-full bg-green-600 text-white py-2 rounded font-bold">Accept Quote</button>
                   </div>
                 )}
               </div>
@@ -189,23 +266,24 @@ function DashboardHome({ user }) {
           </div>
         )}
       </div>
+
+      {/* UPCOMING CONFIRMED */}
       <div>
         <h2 className="text-2xl font-bold mb-4 text-gray-800">Upcoming Services</h2>
-        {upcoming.length === 0 ? <div className="bg-gray-50 p-8 rounded-lg border border-dashed text-center"><p className="text-gray-500">No confirmed services coming up.</p></div> : (
+        {upcoming.length === 0 ? <p className="text-gray-500">No confirmed services.</p> : (
           <div className="space-y-4">
-            {upcoming.map(booking => (
-              <div key={booking.id} className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-green-500">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h3 className="font-bold text-lg text-gray-800">{booking.service}</h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                      <span className="text-gray-700 font-medium">{booking.scheduledDate ? new Date(booking.scheduledDate.seconds * 1000).toLocaleDateString() : new Date(booking.requestedDate.seconds * 1000).toLocaleDateString()}</span>
-                      <span className="text-gray-400">|</span>
-                      <span className="text-gray-600">{booking.requestedTimeSlot || 'Time TBD'}</span>
-                    </div>
-                  </div>
-                  <div className="text-right"><span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${booking.status === 'completed' ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'}`}>{booking.status}</span></div>
+            {upcoming.map(b => (
+              <div key={b.id} className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-green-500 flex justify-between items-center">
+                <div>
+                  <h3 className="font-bold text-lg text-gray-800">{b.service}</h3>
+                  <p className="text-gray-600">
+                    {b.scheduledDate ? new Date(b.scheduledDate.seconds * 1000).toLocaleDateString() : new Date(b.requestedDate.seconds * 1000).toLocaleDateString()} 
+                    <span className="mx-2">|</span> {b.requestedTimeSlot}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 text-right">
+                  <button onClick={() => setRescheduleTarget(b)} className="text-blue-600 text-sm font-bold hover:underline">Reschedule</button>
+                  <button onClick={() => handleCancel(b.id)} className="text-red-500 text-xs hover:underline">Cancel Service</button>
                 </div>
               </div>
             ))}
@@ -215,7 +293,6 @@ function DashboardHome({ user }) {
     </div>
   );
 }
-
 /**
  * =================================================================
  * BLOCK 2: CustomerProfile

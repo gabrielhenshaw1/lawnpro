@@ -3,27 +3,14 @@ import emailjs from '@emailjs/browser';
 /**
  * NOTIFICATION UTILITY
  * Sends real emails via EmailJS.
- * Now supports distinct templates for Customers vs. Providers.
  */
 
-// REPLACE THESE WITH YOUR ACTUAL KEYS
-const SERVICE_ID = 'service_t8mduab';
-const PUBLIC_KEY = 'BJXUh2oZdZeN2YE9B';
+// REPLACE THESE WITH YOUR ACTUAL KEYS FROM EMAILJS DASHBOARD
+const SERVICE_ID = 'YOUR_SERVICE_ID';   
+const TEMPLATE_ID_CUSTOMER = 'YOUR_CUSTOMER_TEMPLATE_ID'; 
+const TEMPLATE_ID_ADMIN = 'YOUR_ADMIN_TEMPLATE_ID'; 
+const PUBLIC_KEY = 'YOUR_PUBLIC_KEY';   
 
-// TEMPLATE A: For the Customer (The "Fancy" one you already made)
-// Fields: {{name}} (Sender Name), {{time}}, {{message}}, {{action_link}}
-const TEMPLATE_ID_CUSTOMER = 'template_6ntqybo'; 
-
-// TEMPLATE B: For the Admin (Simple Notification)
-// Fields: {{message}}, {{action_link}}
-const TEMPLATE_ID_ADMIN = 'template_sy1o5jo'; 
-
-/**
- * @param {string} toEmail - Recipient email
- * @param {string} type - 'new_request', 'quote_received', 'confirmed'
- * @param {string} link - URL to redirect to
- * @param {object} data - Dynamic data { name, servicesSummary, customerName }
- */
 export const sendStatusEmail = async (toEmail, type, link, data = {}) => {
   console.log(`[EmailJS] Preparing to send to ${toEmail}...`);
 
@@ -32,55 +19,65 @@ export const sendStatusEmail = async (toEmail, type, link, data = {}) => {
     timeStyle: 'short',
   });
 
-  let templateId = TEMPLATE_ID_CUSTOMER; // Default to customer view
+  let templateId = TEMPLATE_ID_CUSTOMER; 
   
   const emailParams = {
     to_email: toEmail,
     action_link: link,
     time: currentTime,
-    name: data.name || "LawnPro Team", // Defaults to Team if no name provided
+    name: data.name || "LawnPro Team",
     subject: "LawnPro Update",
     message: ""
   };
 
-  // --- LOGIC: SWITCH TEMPLATE & CONTENT ---
   switch (type) {
-    // CASE 1: NOTIFYING ADMIN (Simple Template)
     case 'new_request':
-      templateId = TEMPLATE_ID_ADMIN;
+      templateId = TEMPLATE_ID_ADMIN; 
       emailParams.subject = "New Job Request Incoming";
-      // "User sent request for: service list on date at time"
-      emailParams.message = `${data.customerName || 'A user'} sent a request for:\n\n${data.servicesSummary || 'Service Details Unavailable'}\n\nPlease review in app.`;
+      emailParams.message = `${data.customerName || 'A user'} sent a request for:\n\n${data.servicesSummary || 'Details in app'}\n\nPlease review in app.`;
       break;
 
-    // CASE 2: NOTIFYING CUSTOMER (Fancy Template)
     case 'quote_received':
-      templateId = TEMPLATE_ID_CUSTOMER;
       emailParams.subject = "Action Required: New Quote Received";
-      emailParams.message = "I have reviewed your property and generated a quote for your request. Please click the link below to review the price and approve the service.";
+      emailParams.message = "I have reviewed your property and generated a quote. Please click the link below to review and approve.";
       break;
 
     case 'confirmed':
-      templateId = TEMPLATE_ID_CUSTOMER;
       emailParams.subject = "Service Confirmed";
-      emailParams.message = "Good news! Your service request has been accepted. I have added you to the schedule.";
+      emailParams.message = "Good news! Your service request has been accepted and scheduled.";
+      break;
+
+    // NEW: Handle the Reschedule Loop
+    case 'reschedule_proposal':
+      // Check who initiated to decide template (if notifying Admin, use Admin template)
+      if (data.isToAdmin) {
+        templateId = TEMPLATE_ID_ADMIN;
+        emailParams.subject = "Reschedule Requested";
+        emailParams.message = `Customer has proposed a new time: ${data.proposedInfo}. Review in app.`;
+      } else {
+        templateId = TEMPLATE_ID_CUSTOMER;
+        emailParams.subject = "Reschedule Proposal Received";
+        emailParams.message = `We have proposed a new time for your service: ${data.proposedInfo}. Please Accept or Counter in the dashboard.`;
+      }
+      break;
+
+    case 'cancelled':
+      emailParams.subject = "Service Cancelled";
+      emailParams.message = "This service appointment has been cancelled.";
       break;
 
     default:
-      emailParams.message = "You have a new notification regarding your account.";
+      emailParams.message = "You have a new notification.";
   }
 
-  // --- SEND ---
   try {
     if (SERVICE_ID === 'YOUR_SERVICE_ID') {
-      console.warn("EmailJS Keys not set. Simulating email...");
-      console.log("TEMPLATE USED:", templateId === TEMPLATE_ID_ADMIN ? "ADMIN_TEMPLATE" : "CUSTOMER_TEMPLATE");
-      console.log("DATA SENT:", emailParams);
+      console.warn("[EmailJS] Simulating email...");
+      console.log("TEMPLATE:", templateId, "DATA:", emailParams);
       return; 
     }
-    
-    const response = await emailjs.send(SERVICE_ID, templateId, emailParams, PUBLIC_KEY);
-    console.log('[EmailJS] Success!', response.status, response.text);
+    await emailjs.send(SERVICE_ID, templateId, emailParams, PUBLIC_KEY);
+    console.log('[EmailJS] Sent');
   } catch (error) {
     console.error('[EmailJS] Failed:', error);
   }
