@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { auth, db } from '../firebase.js'; // <-- Fixed: Added .js extension
+import { auth, db } from '../firebase.js'; 
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword 
@@ -23,6 +23,7 @@ export default function LoginPage() {
   const [profile, setProfile] = useState({
     fullName: '', address: '', city: '', state: '', zip: ''
   });
+  const [savePreferences, setSavePreferences] = useState(true); 
 
   // Admin Application States
   const [adminApp, setAdminApp] = useState({
@@ -55,10 +56,9 @@ export default function LoginPage() {
         if (userData.role === 'admin') {
           navigate('/admin');
         } else if (userData.role === 'developer') {
-          // Developers normally use the secret link, but if they login here, send them there
           navigate('/dev-portal-x9z'); 
         } else if (userData.role === 'pending_admin') {
-          alert("Your application is still under review by the developer team.");
+          alert("Application Pending: Your provider account is currently under review by the developer team.");
           auth.signOut();
         } else {
           navigate('/customer'); 
@@ -91,6 +91,7 @@ export default function LoginPage() {
         email: user.email,
         role: 'customer',
         ...profile,
+        preferencesOptIn: savePreferences,
         createdAt: new Date()
       });
       navigate('/customer');
@@ -130,7 +131,7 @@ export default function LoginPage() {
       });
 
       alert("Application Submitted! A developer will review your business details shortly.");
-      setView('login'); // Send them back to login
+      setView('login'); 
     } catch (err) {
       setError("Application failed: " + err.message);
     } finally {
@@ -255,10 +256,8 @@ export default function LoginPage() {
     );
   }
 
-  // --- VIEW: CUSTOMER SIGN UP (Simplified for brevity, keep your existing logic here) ---
+  // --- VIEW: CUSTOMER SIGN UP ---
   if (view === 'signup-customer') {
-    // ... Copy your existing Customer Sign Up JSX here ...
-    // (I am re-including the simplified version to keep the file complete)
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-12">
           <div className="max-w-lg w-full bg-white p-8 rounded-xl shadow-lg border border-gray-200">
@@ -272,7 +271,34 @@ export default function LoginPage() {
                 <div><label className="block text-sm font-medium text-gray-700">Password</label><input type="password" required className="mt-1 block w-full border rounded-lg p-2" value={password} onChange={e => setPassword(e.target.value)} /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Confirm Password</label><input type="password" required className="mt-1 block w-full border rounded-lg p-2" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} /></div>
               </div>
+              
+              <hr className="my-6" />
+              
               <div><label className="block text-sm font-medium text-gray-700">Full Name</label><input type="text" required className="mt-1 block w-full border rounded-lg p-2" value={profile.fullName} onChange={e => setProfile({...profile, fullName: e.target.value})} /></div>
+              <div><label className="block text-sm font-medium text-gray-700">Address</label><input type="text" required className="mt-1 block w-full border rounded-lg p-2" value={profile.address} onChange={e => setProfile({...profile, address: e.target.value})} /></div>
+              <div className="grid grid-cols-3 gap-4">
+                <div><label className="block text-sm font-medium text-gray-700">City</label><input type="text" required className="mt-1 block w-full border rounded-lg p-2" value={profile.city} onChange={e => setProfile({...profile, city: e.target.value})} /></div>
+                <div><label className="block text-sm font-medium text-gray-700">State</label><input type="text" required className="mt-1 block w-full border rounded-lg p-2" value={profile.state} onChange={e => setProfile({...profile, state: e.target.value})} /></div>
+                <div><label className="block text-sm font-medium text-gray-700">Zip</label><input type="text" required className="mt-1 block w-full border rounded-lg p-2" value={profile.zip} onChange={e => setProfile({...profile, zip: e.target.value})} /></div>
+              </div>
+
+              {/* OPT-IN CHECKBOX */}
+              <div className="flex items-start mt-4 bg-green-50 p-3 rounded-lg border border-green-100">
+                 <div className="flex items-center h-5">
+                   <input
+                     id="optIn"
+                     type="checkbox"
+                     checked={savePreferences}
+                     onChange={(e) => setSavePreferences(e.target.checked)}
+                     className="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300 rounded"
+                   />
+                 </div>
+                 <div className="ml-3 text-sm">
+                   <label htmlFor="optIn" className="font-medium text-gray-700">Retain my preferences</label>
+                   <p className="text-gray-500">Save my service history and lawn details for faster future bookings.</p>
+                 </div>
+              </div>
+
               <button type="submit" disabled={loading} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 mt-4">{loading ? 'Creating...' : 'Create Account'}</button>
             </form>
           </div>

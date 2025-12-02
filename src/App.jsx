@@ -24,35 +24,32 @@ import './App.css';
  * ADMIN PORTAL LAYOUT
  */
 function AdminLayout() {
-  const [currentPage, setCurrentPage] = useState('Dashboard');
-  // New: specific data passed between pages (e.g. address for map tool)
-  const [pageData, setPageData] = useState(null);
+  // State now holds an object: { name: 'Dashboard', data: null }
+  const [activePage, setActivePage] = useState({ name: 'Dashboard', data: null });
 
-  // Wrapper to handle navigation + data passing
-  const navigateTo = (page, data = null) => {
-    setCurrentPage(page);
-    setPageData(data);
+  // Helper to update page and optional data
+  const handleNavigate = (name, data = null) => {
+    setActivePage({ name, data });
   };
 
   const renderCurrentPage = () => {
-    switch (currentPage) {
-      case 'Dashboard': return <DashboardPage onNavigate={navigateTo} />;
-      // Pass navigation function so Requests can jump to Estimate Tool
-      case 'Requests':  return <RequestsPage onNavigate={navigateTo} />; 
-      // Pass any data (like address/bookingId) to Measurement Page
-      case 'Estimate Tool': return <MeasurementPage initialData={pageData} />;
+    switch (activePage.name) {
+      case 'Dashboard': return <DashboardPage onNavigate={handleNavigate} />;
+      case 'Requests':  return <RequestsPage onNavigate={handleNavigate} />; 
+      // FIX: Pass onNavigate to MeasurementPage
+      case 'Estimate Tool': return <MeasurementPage initialData={activePage.data} onNavigate={handleNavigate} />;
       case 'Schedule':  return <SchedulePage />;
       case 'Clients':   return <ClientsPage />;
       case 'Billing':   return <BillingPage />;
-      default:          return <DashboardPage onNavigate={navigateTo} />;
+      default:          return <DashboardPage onNavigate={handleNavigate} />;
     }
   };
 
   return (
     <div className="flex h-screen bg-gray-100">
-      <Sidebar onNavigate={(page) => navigateTo(page, null)} currentPage={currentPage} />
+      <Sidebar onNavigate={handleNavigate} currentPage={activePage.name} />
       <div className="flex-1 flex flex-col overflow-hidden ml-64">
-        <Header title={currentPage} />
+        <Header title={activePage.name} />
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6">
           <div className="container mx-auto">
             {renderCurrentPage()}
@@ -63,6 +60,9 @@ function AdminLayout() {
   );
 }
 
+/**
+ * MAIN APP COMPONENT
+ */
 export default function App() {
   return (
     <Router>
