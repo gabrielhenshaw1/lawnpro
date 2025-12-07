@@ -75,7 +75,6 @@ function CalendarGrid({ bookings, forecastDays, onJobClick }) {
   
   const getBookingsForDay = (day) => {
     return bookings.filter(b => {
-      // Use scheduledDate if confirmed, else requestedDate
       const dateSource = b.scheduledDate || b.requestedDate; 
       const d = dateSource && dateSource.seconds ? new Date(dateSource.seconds * 1000) : new Date(dateSource);
       if (!d || isNaN(d.getTime())) return false;
@@ -143,6 +142,10 @@ export default function DashboardPage({ onNavigate }) {
   const [selectedJob, setSelectedJob] = useState(null);
   const [rescheduleData, setRescheduleData] = useState({ date: '', time: '' });
   const [isRescheduling, setIsRescheduling] = useState(false);
+  
+  // COMPLETION STATE
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [finalBillAmount, setFinalBillAmount] = useState('');
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
@@ -205,6 +208,33 @@ export default function DashboardPage({ onNavigate }) {
     } catch (e) { console.error(e); }
   };
 
+  const handleCompleteJob = async () => {
+    const bill = parseFloat(finalBillAmount);
+    if (isNaN(bill) || bill < 0) return alert("Please enter a valid bill amount.");
+
+    try {
+      await updateDoc(doc(db, "bookings", selectedJob.id), {
+        status: "completed",
+        finalBillAmount: bill,
+        completedAt: new Date()
+      });
+      // Optionally notify user here if desired, or just silent update
+      alert("Job marked as completed! Revenue recorded.");
+      setSelectedJob(null);
+      setIsCompleting(false);
+    } catch (e) {
+      console.error(e);
+      alert("Error completing job.");
+    }
+  };
+
+  const openCompletion = () => {
+    // Pre-fill with quote amount if available
+    setFinalBillAmount(selectedJob.quoteAmount || '');
+    setIsCompleting(true);
+    setIsRescheduling(false);
+  };
+
   return (
     <div className="space-y-6 relative">
       
@@ -217,7 +247,7 @@ export default function DashboardPage({ onNavigate }) {
                 <h3 className="text-xl font-bold text-gray-900">{selectedJob.service}</h3>
                 <p className="text-sm text-green-600 font-medium">{selectedJob.status.toUpperCase()}</p>
               </div>
-              <button onClick={() => { setSelectedJob(null); setIsRescheduling(false); }} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+              <button onClick={() => { setSelectedJob(null); setIsRescheduling(false); setIsCompleting(false); }} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
             </div>
             
             <div className="p-6 space-y-4">
@@ -238,7 +268,7 @@ export default function DashboardPage({ onNavigate }) {
                 </p>
               </div>
 
-              {/* Reschedule Inputs */}
+              {/* RESCHEDULE FORM */}
               {isRescheduling && (
                 <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 mt-4 animate-fadeIn">
                   <p className="text-xs font-bold text-blue-800 uppercase mb-2">Propose New Time</p>
@@ -252,16 +282,44 @@ export default function DashboardPage({ onNavigate }) {
                   <button onClick={handleProposeReschedule} className="w-full bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700">Send Proposal</button>
                 </div>
               )}
+
+              {/* COMPLETION FORM */}
+              {isCompleting && (
+                <div className="bg-green-50 p-4 rounded-lg border border-green-100 mt-4 animate-fadeIn">
+                  <p className="text-xs font-bold text-green-800 uppercase mb-2">Finalize Job</p>
+                  <div className="mb-3">
+                    <label className="block text-xs text-gray-600 mb-1">Final Bill Amount ($)</label>
+                    <input 
+                      type="number" 
+                      value={finalBillAmount} 
+                      onChange={e => setFinalBillAmount(e.target.value)} 
+                      className="w-full p-2 border border-green-200 rounded text-lg font-bold text-green-700" 
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <button onClick={handleCompleteJob} className="w-full bg-green-600 text-white py-2 rounded font-bold hover:bg-green-700">Confirm Completion</button>
+                </div>
+              )}
             </div>
 
+            {/* MODAL FOOTER ACTIONS */}
             <div className="bg-gray-50 p-4 border-t border-gray-200 flex gap-3">
-              {!isRescheduling ? (
+              {!isRescheduling && !isCompleting ? (
                 <>
-                  <button onClick={() => setIsRescheduling(true)} className="flex-1 bg-white border border-gray-300 text-gray-700 py-2 rounded font-bold hover:bg-gray-100">Reschedule</button>
-                  <button onClick={handleCancelJob} className="flex-1 bg-red-100 text-red-700 py-2 rounded font-bold hover:bg-red-200">Cancel Job</button>
+                  <button onClick={openCompletion} className="flex-1 bg-green-600 text-white py-2 rounded font-bold hover:bg-green-700 shadow-sm">
+                    Complete Job
+                  </button>
+                  <button onClick={() => setIsRescheduling(true)} className="flex-1 bg-white border border-gray-300 text-gray-700 py-2 rounded font-bold hover:bg-gray-100">
+                    Reschedule
+                  </button>
+                  <button onClick={handleCancelJob} className="flex-1 bg-red-50 text-red-600 border border-red-100 py-2 rounded font-bold hover:bg-red-100">
+                    Cancel
+                  </button>
                 </>
               ) : (
-                <button onClick={() => setIsRescheduling(false)} className="w-full text-gray-500 py-2 hover:underline">Cancel Reschedule</button>
+                <button onClick={() => { setIsRescheduling(false); setIsCompleting(false); }} className="w-full text-gray-500 py-2 hover:underline text-sm">
+                  ← Back to Options
+                </button>
               )}
             </div>
           </div>

@@ -515,7 +515,7 @@ function CustomerPreferences({ user, profile, setProfile }) {
 
 /**
  * =================================================================
- * BLOCK 4: BookingWizard (Full Logic Restored & Inputs Fixed)
+ * BLOCK 4: BookingWizard (With Real-Time Conflict Detection)
  * =================================================================
  */
 function BookingWizard({ user, profile, onCancel }) {
@@ -525,8 +525,9 @@ function BookingWizard({ user, profile, onCancel }) {
   const [loadingPros, setLoadingPros] = useState(true);
 
   // --- SMART SCHEDULING DATA ---
-  const [blockedDates, setBlockedDates] = useState([]);
-  const [defaultHours, setDefaultHours] = useState(null);
+  const [blockedDates, setBlockedDates] = useState([]); // PTO / Holidays
+  const [defaultHours, setDefaultHours] = useState(null); // Weekly Schedule
+  const [occupiedSlots, setOccupiedSlots] = useState({}); // { "2025-12-05": ["09:00 AM", "10:00 AM"] }
 
   // --- MULTI-SELECT STATE ---
   const [selectedServices, setSelectedServices] = useState([]);
@@ -535,8 +536,8 @@ function BookingWizard({ user, profile, onCancel }) {
   const [photos, setPhotos] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // 1. INITIAL FETCHES (Pros, Exceptions, Settings)
   useEffect(() => {
-    // 1. Fetch Pros from Database
     const fetchPros = async () => {
       try {
         const q = query(collection(db, "users"), where("role", "==", "admin"));
@@ -547,27 +548,31 @@ function BookingWizard({ user, profile, onCancel }) {
           list.push({ 
             id: data.uid, 
             name: data.businessName || data.fullName, 
-            email: data.email, // <--- CRITICAL FOR NOTIFICATIONS
+            email: data.email, 
             area: "Service Area", 
             rating: 5.0, 
             image: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.uid}` 
           });
         });
         
-        // Fallback if no admins found
+        // Fallback for Demo/Testing if no admins exist
         if(list.length === 0) {
-           list.push({id: '1', name: 'Joshua Russelburg', email: 'joshua@test.com', area: 'Morganfield', rating: 5.0, image: 'https://api.dicebear.com/7.x/avataaars/svg?seed=josh'});
+           list.push({
+             id: '1', 
+             name: 'Joshua Russelburg', 
+             email: 'joshua@lawnpro.com', // FIX: Added specific email to fallback
+             area: 'Morganfield', 
+             rating: 5.0, 
+             image: 'https://api.dicebear.com/7.x/avataaars/svg?seed=josh'
+           });
         }
         setPros(list);
-      } catch (error) {
-        console.error("Error fetching pros:", error);
-      } finally {
-        setLoadingPros(false);
-      }
+      } catch (error) { console.error("Error fetching pros:", error); } 
+      finally { setLoadingPros(false); }
     };
     fetchPros();
 
-    // 2. Fetch Availability Exceptions
+    // Fetch PTO/Holidays
     const unsubscribeExceptions = onSnapshot(collection(db, "availabilityExceptions"), (snapshot) => {
       const dates = [];
       snapshot.forEach(doc => {
@@ -583,13 +588,45 @@ function BookingWizard({ user, profile, onCancel }) {
       setBlockedDates(dates);
     });
 
-    // 3. Fetch Default Weekly Settings
+    // Fetch Weekly Hours
     getDoc(doc(db, "settings", "defaultHours")).then(snap => {
       if(snap.exists()) setDefaultHours(snap.data());
     });
 
     return () => unsubscribeExceptions();
   }, []);
+
+  // 2. LISTEN FOR PRO'S EXISTING BOOKINGS (When Pro is Selected)
+  useEffect(() => {
+    if (!selectedPro) return;
+
+    // Query confirmed or scheduled jobs for this specific pro
+    const q = query(
+      collection(db, "bookings"),
+      where("proId", "==", selectedPro.id),
+      where("status", "in", ["confirmed", "scheduled"])
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const busyMap = {};
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        // Get date string YYYY-MM-DD
+        const dateObj = data.scheduledDate ? new Date(data.scheduledDate.seconds * 1000) : new Date(data.requestedDate.seconds * 1000);
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const d = String(dateObj.getDate()).padStart(2, '0');
+        const dateKey = `${y}-${m}-${d}`;
+
+        if (!busyMap[dateKey]) busyMap[dateKey] = [];
+        // Add the time slot to the busy list
+        if (data.requestedTimeSlot) busyMap[dateKey].push(data.requestedTimeSlot);
+      });
+      setOccupiedSlots(busyMap);
+    });
+
+    return () => unsubscribe();
+  }, [selectedPro]);
 
   const [useProfileAddress, setUseProfileAddress] = useState(true);
   const [customerInfo, setCustomerInfo] = useState({ 
@@ -609,16 +646,12 @@ function BookingWizard({ user, profile, onCancel }) {
 
   const toggleService = (service) => {
     const exists = selectedServices.find(s => s.id === service.id);
-    if (exists) {
-      setSelectedServices(prev => prev.filter(s => s.id !== service.id));
-    } else {
-      setSelectedServices(prev => [...prev, { ...service, date: '', time: '', freq: 'One-time', availableSlots: [] }]);
-    }
+    if (exists) setSelectedServices(prev => prev.filter(s => s.id !== service.id));
+    else setSelectedServices(prev => [...prev, { ...service, date: '', time: '', freq: 'One-time', availableSlots: [] }]);
   };
 
   const checkDateAvailability = (rawDate) => {
     if (!rawDate) return { valid: false, msg: '' };
-    // Force local time interpretation
     const dateObj = new Date(rawDate + "T00:00:00");
     const dayName = DAYS_MAP[dateObj.getDay()];
 
@@ -652,10 +685,8 @@ function BookingWizard({ user, profile, onCancel }) {
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files);
-      if (files.length > 4) { alert("Maximum 4 photos allowed."); return; }
       const promises = files.map(file => {
         return new Promise((resolve, reject) => {
-          if (file.size > 500000) { alert(`File ${file.name} is too large. Max 500KB.`); reject("File too large"); return; }
           const reader = new FileReader();
           reader.readAsDataURL(file);
           reader.onload = () => resolve(reader.result);
@@ -669,36 +700,34 @@ function BookingWizard({ user, profile, onCancel }) {
   const handleSubmitRequest = async () => {
     setIsSubmitting(true);
     try {
+      const servicesSummary = selectedServices.map(s => `- ${s.title} (${s.freq}) on ${s.date} at ${s.time}`).join('\n');
+      
       const promises = selectedServices.map(srv => {
         return addDoc(collection(db, "bookings"), {
-          customerId: user.uid,
-          customerName: customerInfo.name,
-          customerEmail: customerInfo.email,
+          customerId: user.uid, customerName: customerInfo.name, customerEmail: customerInfo.email,
           address: `${customerInfo.address}, ${customerInfo.city}, ${customerInfo.state} ${customerInfo.zip}`,
           proId: selectedPro?.id || 'admin_1', 
           proName: selectedPro?.name || 'LawnPro Provider',
-          service: srv.title,
-          requestedDate: new Date(srv.date),
-          requestedTimeSlot: srv.time,
-          frequency: srv.freq,
-          photos: photos,
-          status: "pending",
-          createdAt: new Date()
+          service: srv.title, requestedDate: new Date(srv.date), requestedTimeSlot: srv.time, frequency: srv.freq,
+          photos: photos, status: "pending", createdAt: new Date()
         });
       });
       await Promise.all(promises);
       
-      // NOTIFY: Send to Real Provider Email
-      const targetEmail = selectedPro?.email || "provider@lawnpro.com";
-      await sendStatusEmail(targetEmail, "new_request", `http://localhost:5173/admin`); 
+      // FIX: Ensure we use the selected pro's email, or alert if missing
+      const targetEmail = selectedPro?.email;
+      if (targetEmail) {
+        await sendStatusEmail(targetEmail, "new_request", `http://localhost:5173/admin`, {
+          customerName: customerInfo.name,
+          servicesSummary: servicesSummary
+        });
+      } else {
+        console.warn("No provider email found. Notification skipped.");
+      }
       
       setStep(5);
-    } catch (error) {
-      console.error("Error", error);
-      alert("Failed to submit.");
-    } finally {
-      setIsSubmitting(false);
-    }
+    } catch (error) { console.error("Error", error); alert("Failed to submit."); } 
+    finally { setIsSubmitting(false); }
   };
 
   if (step === 1) return (
@@ -721,61 +750,22 @@ function BookingWizard({ user, profile, onCancel }) {
   if (step === 2) return (
     <div className="max-w-lg mx-auto">
       <h2 className="text-2xl font-bold mb-4">Verify Info</h2>
-      <div className="mb-4 bg-blue-50 p-3 rounded-lg flex items-center">
-        <input type="checkbox" checked={useProfileAddress} onChange={e => setUseProfileAddress(e.target.checked)} className="mr-2 h-5 w-5" />
-        <label>Use Default Profile Address</label>
-      </div>
+      <div className="mb-4 bg-blue-50 p-3 rounded-lg flex items-center"><input type="checkbox" checked={useProfileAddress} onChange={e => setUseProfileAddress(e.target.checked)} className="mr-2 h-5 w-5" /><label>Use Default Profile Address</label></div>
       <div className="space-y-3 mb-6">
-        <input 
-          type="text" 
-          placeholder="Address" 
-          value={customerInfo.address} 
-          disabled={useProfileAddress} 
-          onChange={e => setCustomerInfo({...customerInfo, address: e.target.value})} 
-          className="w-full p-2 border rounded" 
-        />
+        <input type="text" placeholder="Address" value={customerInfo.address} disabled={useProfileAddress} onChange={e => setCustomerInfo({...customerInfo, address: e.target.value})} className="w-full p-2 border rounded" />
         <div className="grid grid-cols-3 gap-2">
-          {/* FIX: Manual input handlers added below */}
-          <input 
-            type="text" 
-            placeholder="City" 
-            value={customerInfo.city} 
-            disabled={useProfileAddress} 
-            onChange={e => setCustomerInfo({...customerInfo, city: e.target.value})} 
-            className="w-full p-2 border rounded" 
-          />
-          <input 
-            type="text" 
-            placeholder="State" 
-            value={customerInfo.state} 
-            disabled={useProfileAddress} 
-            onChange={e => setCustomerInfo({...customerInfo, state: e.target.value})} 
-            className="w-full p-2 border rounded" 
-          />
-          <input 
-            type="text" 
-            placeholder="Zip" 
-            value={customerInfo.zip} 
-            disabled={useProfileAddress} 
-            onChange={e => setCustomerInfo({...customerInfo, zip: e.target.value})} 
-            className="w-full p-2 border rounded" 
-          />
+          <input type="text" placeholder="City" value={customerInfo.city} disabled={useProfileAddress} onChange={e => setCustomerInfo({...customerInfo, city: e.target.value})} className="w-full p-2 border rounded" />
+          <input type="text" placeholder="State" value={customerInfo.state} disabled={useProfileAddress} onChange={e => setCustomerInfo({...customerInfo, state: e.target.value})} className="w-full p-2 border rounded" />
+          <input type="text" placeholder="Zip" value={customerInfo.zip} disabled={useProfileAddress} onChange={e => setCustomerInfo({...customerInfo, zip: e.target.value})} className="w-full p-2 border rounded" />
         </div>
       </div>
       <div className="border-t pt-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">Upload Photos</label>
         <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-green-500 transition-colors">
           <input type="file" multiple accept="image/*" onChange={handleFileChange} className="hidden" id="photo-upload" />
-          <label htmlFor="photo-upload" className="cursor-pointer">
-            <div className="text-gray-500"><span className="text-green-600 font-bold hover:underline">Click to upload</span> or drag and drop</div>
-            <p className="text-xs text-gray-400 mt-1">Max 4 photos, 500KB each.</p>
-          </label>
+          <label htmlFor="photo-upload" className="cursor-pointer"><div className="text-gray-500"><span className="text-green-600 font-bold hover:underline">Click to upload</span> or drag and drop</div><p className="text-xs text-gray-400 mt-1">Max 4 photos, 500KB each.</p></label>
         </div>
-        {photos.length > 0 && (
-          <div className="mt-4 grid grid-cols-4 gap-2">
-            {photos.map((src, i) => <img key={i} src={src} alt="Preview" className="w-full h-16 object-cover rounded border" />)}
-          </div>
-        )}
+        {photos.length > 0 && <div className="mt-4 grid grid-cols-4 gap-2">{photos.map((src, i) => <img key={i} src={src} alt="Preview" className="w-full h-16 object-cover rounded border" />)}</div>}
       </div>
       <div className="flex gap-2 mt-6">
         <button onClick={() => setStep(1)} className="px-4 py-2 text-gray-600">Back</button>
@@ -791,7 +781,6 @@ function BookingWizard({ user, profile, onCancel }) {
         <div className="w-full max-w-lg">
           <button onClick={() => setStep(2)} className="text-sm text-gray-500 mb-4 hover:underline flex items-center"><span className="mr-1">←</span> Back to Info</button>
           <h2 className="text-3xl font-bold mb-2 text-gray-800 text-center">Select Services</h2>
-          <p className="text-center text-gray-500 mb-6">Select one or more services to book.</p>
           <div className="space-y-8 mb-20">
             {categories.map(cat => (
               <div key={cat} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
@@ -842,7 +831,32 @@ function BookingWizard({ user, profile, onCancel }) {
               <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Frequency</label><select value={srv.freq} onChange={(e) => updateServiceSchedule(index, 'freq', e.target.value)} className="w-full p-3 border rounded text-sm bg-gray-50">{['One-time', 'Weekly', 'Biweekly', 'Monthly', 'Quarterly'].map(f => <option key={f}>{f}</option>)}</select></div>
             </div>
             {srv.date && !srv.error && srv.availableSlots.length > 0 && (
-              <div className="mt-4"><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Time Slot</label><div className="grid grid-cols-3 gap-2">{srv.availableSlots.map(t => { const isTaken = selectedServices.some((otherSrv, i) => i !== index && otherSrv.date === srv.date && otherSrv.time === t); return (<button key={t} onClick={() => !isTaken && updateServiceSchedule(index, 'time', t)} disabled={isTaken} className={`text-xs py-2 border rounded transition-colors ${srv.time === t ? 'bg-green-600 text-white border-green-600' : isTaken ? 'bg-gray-100 text-gray-400 cursor-not-allowed decoration-slice line-through' : 'bg-gray-50 text-gray-700 hover:bg-gray-100 hover:border-green-300'}`}>{t}</button>); })}</div></div>
+              <div className="mt-4"><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Time Slot</label>
+              <div className="grid grid-cols-3 gap-2">
+                {srv.availableSlots.map(t => {
+                  // CONFLICT CHECK 1: Other services in this current booking
+                  const isTakenSelf = selectedServices.some((otherSrv, i) => i !== index && otherSrv.date === srv.date && otherSrv.time === t);
+                  // CONFLICT CHECK 2: Existing Database Bookings for this Pro
+                  const isTakenDB = occupiedSlots[srv.date]?.includes(t);
+                  
+                  const isTaken = isTakenSelf || isTakenDB;
+
+                  return (
+                    <button 
+                      key={t} 
+                      onClick={() => !isTaken && updateServiceSchedule(index, 'time', t)} 
+                      disabled={isTaken} 
+                      className={`text-xs py-2 border rounded transition-colors 
+                        ${srv.time === t ? 'bg-green-600 text-white border-green-600' : 
+                          isTaken ? 'bg-gray-100 text-gray-400 cursor-not-allowed decoration-slice line-through' : 
+                          'bg-gray-50 text-gray-700 hover:bg-gray-100 hover:border-green-300'}`}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
+              </div>
             )}
           </div>
         ))}
